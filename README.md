@@ -1,6 +1,4 @@
 # Cryptography
-Cryptography project repo
-
 This is the repository for the development of the Cryptography project.
 
 The team consists of:
