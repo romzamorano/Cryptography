@@ -1,2 +1,2 @@
-# Criptography
-Criptography project repo
+# Cryptography
+Cryptography project repo
