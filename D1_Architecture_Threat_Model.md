@@ -20,7 +20,54 @@ To focus strictly on applied cryptography, the following elements are out of sco
 
 ## 2. Architecture Diagram
 
-![Architecture Diagram](diagrama.png)
+flowchart LR
+    %% Configuración de estilo
+    classDef trusted fill:#d4edda,stroke:#28a745,stroke-width:2px,color:black;
+    classDef untrusted fill:#f8d7da,stroke:#dc3545,stroke-width:2px,stroke-dasharray: 5 5,color:black;
+    classDef container fill:#fff3cd,stroke:#ffc107,stroke-width:2px,color:black;
+
+    ActorAlice([User: Alice])
+    ActorAttacker{Attacker}
+    ActorBob([User: Bob])
+
+    subgraph TrustedSender["Trusted Component: Alice's Environment"]
+        direction TB
+        A1[Plaintext File]
+        A2[("Key Store\n(Where keys are stored):\n- Alice's Private Key\n- Public Keys / Recipients")]
+        A3["Application (Vault)\n- Where encryption happens\n- Where signing happens"]
+        
+        ActorAlice --> A1
+        A1 --> A3
+        A2 -.-> A3
+    end
+
+    subgraph UntrustedZone["Untrusted Component"]
+        direction TB
+        U1[("Storage (local or remote)")]
+        U2["Encrypted File Container\n(Secure Package)"]
+        
+        U1 --- U2
+        ActorAttacker -.->|Modifies / Eavesdrops| U1
+    end
+
+    subgraph TrustedRecipient["Trusted Component: Bob's Environment"]
+        direction TB
+        B1["Application (Vault)\n- Signature Verification\n- Where decryption happens"]
+        B2[("Key Store\n(Where keys are stored):\n- Bob's Private Key\n- Alice's Public Key")]
+        B4[Recovered Plaintext File]
+
+        B2 -.-> B1
+        B1 --> B4
+        B4 --> ActorBob
+    end
+
+    %% Data flows explicitly labeled
+    A3 == "Data Flow\n(Crosses Trust Boundary)" ===> U1
+    U1 == "Data Flow\n(Crosses Trust Boundary)" ===> B1
+
+    class TrustedSender,TrustedRecipient trusted;
+    class UntrustedZone untrusted;
+    class U2 container;
 
 **Architectural Details:**
 * **Where encryption happens:** Symmetrically within Alice's Secure File Exchange Engine (Trusted Sender boundary) before the file is exposed to the network.
