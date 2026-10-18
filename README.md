@@ -1,5 +1,6 @@
 # Cryptography
 This is the repository for the development of the Cryptography project.
+<img width="440" height="627" alt="image" src="https://giphy.com/gifs/computer-mograph-hack-077i6AULCXc0FKTj9s" />
 
 The team consists of:
 
