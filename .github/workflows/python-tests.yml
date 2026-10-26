@@ -25,6 +25,6 @@ jobs:
         python -m pip install --upgrade pip
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
         
-    - name: Ejecutar pruebas unitarias (D2)
+    - name: Ejecutar pruebas unitarias (D3)
       run: |
-        python -m unittest discover -s tests
+        python -m unittest discover -s tests  
