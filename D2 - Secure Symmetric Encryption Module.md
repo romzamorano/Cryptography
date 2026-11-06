@@ -1,6 +1,7 @@
 # Deliverable 2 (D2): Core Cryptographic Module Implementation
 
 **Branch:** `feature/d2-crypto-module`
+
 > **Note:** This document describes the D2 implementation as it exists in the `feature/d2-crypto-module` branch (single owner, binary container, D2 tests). In `main`, the module was extended in D3 (hybrid encryption, a fresh file key per file) and D5 (signed JSON container), and `tests/test_crypto.py` now contains the D3 tests.
 
 ## Overview of What Was Implemented
