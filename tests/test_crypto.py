@@ -40,5 +40,30 @@ class TestEncryptionModule(unittest.TestCase):
         container2 = self.module.encrypt_file(self.plaintext, self.filename)
         self.assertNotEqual(container1, container2)
 
+    def test_modified_metadata_fails(self):
+        """Prueba: Si se alteran los metadatos (AAD), el sistema rechaza el archivo"""
+        container = self.module.encrypt_file(self.plaintext, self.filename)
+
+        # El atacante cambia el nombre del archivo dentro del header (mismo tamaño)
+        tampered_container = container.replace(b"secreto.txt", b"secreto.TXT")
+        self.assertNotEqual(container, tampered_container)
+
+        with self.assertRaises(ValueError):
+            self.module.decrypt_file(tampered_container)
+
+    def test_modified_ciphertext_body_fails(self):
+        """Prueba: Si se voltea un bit dentro del ciphertext (no del tag), se rechaza"""
+        container = self.module.encrypt_file(self.plaintext, self.filename)
+
+        # Saltamos [tamaño AAD (4)] + [AAD] + [nonce (12)] para caer en el ciphertext
+        aad_length = int.from_bytes(container[:4], byteorder='big')
+        pos = 4 + aad_length + 12
+
+        tampered_container = bytearray(container)
+        tampered_container[pos] ^= 0x01
+
+        with self.assertRaises(ValueError):
+            self.module.decrypt_file(bytes(tampered_container))
+
 if __name__ == '__main__':
     unittest.main()
