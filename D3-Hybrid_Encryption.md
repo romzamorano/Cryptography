@@ -79,7 +79,7 @@ The entire JSON header—including `metadata` (filename, algorithm identifier, t
 
 ---
 
-## Encrypted Container Binary Layout
+## Encrypted Container Binary Layout (D3 version, replaced in D5)
 
 ```text
 +-----------------------+-----------------------------------+-------------------+----------------------------------+
