@@ -30,9 +30,9 @@ The **Secure Digital Document Vault** lets a user encrypt a file and share it se
 
 1. Alice encrypts the file with a fresh **file key** (AES-GCM) → ciphertext + authentication tag.
 2. The file key is encrypted with ECIES for each recipient's public key (Alice, Bob).
-3. Everything is packed into a **secure container**: `[AAD length][AAD header JSON][nonce][ciphertext + tag]`.
+3. The container (metadata, recipients, nonce, ciphertext, tag) is **signed with Ed25519** by the sender and stored as a JSON **secure container**: `{format, version, metadata, recipients, nonce, ciphertext, tag, signer_id, signature}` (see [`D5-Digital_Signatures.md`](D5-Digital_Signatures.md)).
 4. The container travels through an **untrusted** channel/storage where an attacker may read or modify it.
-5. Each recipient uses **their own private key** to unwrap the file key and decrypt. An attacker without a listed private key, or a modified container, is rejected.
+5. Each recipient first **verifies the signature** with the sender's public key, then uses **their own private key** to unwrap the file key and decrypt. An attacker without a listed private key, a modified container, or a forged signature is rejected.
 
 The original threat model diagram from Deliverable 1 is in [`D1_Architecture_Threat_Model.md`](D1_Architecture_Threat_Model.md).
 
@@ -43,6 +43,7 @@ The original threat model diagram from Deliverable 1 is in [`D1_Architecture_Thr
 | D1 — Architecture & Threat Model | [`D1_Architecture_Threat_Model.md`](D1_Architecture_Threat_Model.md) |
 | D2 — Secure Symmetric Encryption Module | [`D2 - Secure Symmetric Encryption Module.md`](D2%20-%20Secure%20Symmetric%20Encryption%20Module.md) |
 | D3 — Hybrid Encryption (multi-recipient) | [`D3-Hybrid_Encryption.md`](D3-Hybrid_Encryption.md) |
+| D4 — Midterm System Presentation & Security Review | [Slides (Genially)](https://view.genially.com/6ae7e53c6fd0bfcb5d875c20) · Demo: [`demo.py`](demo.py) |
 | D5 — Digital Signatures | [`D5-Digital_Signatures.md`](D5-Digital_Signatures.md) |
 
 ## Repository structure
