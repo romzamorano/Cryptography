@@ -1,6 +1,7 @@
 # Cryptography — Secure Digital Document Vault (Deliverable 3: Hybrid Encryption)
 
 This is the repository for the development of the Cryptography project.
+
 > **Note:** This document describes the container as it was delivered in D3. Since D5, the container is a signed JSON document; the current format is described in [`D5-Digital_Signatures.md`](D5-Digital_Signatures.md#container-format-d5).
 
 The team consists of:
