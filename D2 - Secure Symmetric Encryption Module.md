@@ -8,7 +8,7 @@ For **Deliverable 2**, we designed and implemented the core symmetric cryptograp
 
 The implementation is divided into two main components:
 1. **`vault/crypto_module.py` (`SecureEncryptionModule`):** The cryptographic engine responsible for key generation, nonce management, authenticated file/data encryption, metadata binding, and fail-safe decryption.
-**`tests/test_crypto.py`:** An adversarial unit test suite that validates both functional correctness and cryptographic failure modes under tampering attacks.
+2. **`tests/test_crypto.py`:** An adversarial unit test suite that validates both functional correctness and cryptographic failure modes under tampering attacks.
 
 ---
 
