@@ -93,6 +93,8 @@ python demo.py
 
 Press **Enter** to move between sections. Everything is shown in the terminal, and the generated files are saved in `demo_files/`.
 
+> **Note:** Up to D5, `demo.py` stores the private keys (P-256 and Ed25519) **unencrypted** in `demo_files/` for demonstration purposes. This is addressed in **D6 — Key Management**, where private keys are stored in an encrypted keystore protected with a password-derived key (KDF) and the password is requested only when a key is needed, as required by the *Confidentiality of private keys* requirement in [`D1_Architecture_Threat_Model.md`](D1_Architecture_Threat_Model.md).
+
 | Section | What it shows | Expected result |
 |---|---|---|
 | 1. Encrypt a file | Alice encrypts `secret.txt` and decrypts it | ✅ Decrypted file is identical to the original |
