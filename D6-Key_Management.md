@@ -1,68 +1,209 @@
-Deliverable 6
+# Deliverable 6 — Secure Key Management
 
-Key Management Design
+**Security goal:** private keys must remain confidential and usable only by authorized users, **even if storage is compromised**.
 
-KDF selection and parameters
+D2–D5 already encrypt (AES-256-GCM), share (ECIES P-256) and authenticate (Ed25519) files. All of that collapses if a private key is exposed, so D6 adds a password-protected **keystore** (`vault/keystore.py`) that protects the two private keys each user owns:
 
-To derive a strong symmetric encryption key from a user's password, our system uses PBKDF2 (Password-Based Key Derivation Function 2) with HMAC-SHA256.
+| Key | Algorithm | Used for | Keystore file |
+|---|---|---|---|
+| Encryption key | ECDH P-256 | Unwrap the file key of shared files (ECIES, D3) | `<user>_p256.json` |
+| Signing key | Ed25519 | Sign containers (D5) | `<user>_ed25519.json` |
 
-Iterations: 600,000 (aligned with modern OWASP recommendations).
+Public keys are not secret: they are exported as PEM files and also stored (with their fingerprint) inside the keystore metadata.
 
-Output length: 256 bits (32 bytes, required for AES-256).
+---
 
-Rationale: This high iteration count makes the key derivation computationally expensive. It intentionally slows down offline brute-force and dictionary attacks while keeping the delay (around a fraction of a second) acceptable for a legitimate user executing a cryptographic operation.
+## 1. Private key protection
 
-Key storage format
+Private keys are **never written to disk in plaintext**. The protection pipeline is:
 
-Private keys (P-256 for ECIES and Ed25519 for signatures) are never stored in plaintext. They are encrypted using AES-256-GCM and saved as a structured JSON object:
+```
+password ──► PBKDF2-HMAC-SHA256 (random 16-byte salt, 600,000 iterations) ──► 256-bit KEK
+private key (PKCS#8) ──► AES-256-GCM(KEK, random 12-byte nonce, AAD = keystore header) ──► ciphertext + tag
+```
 
+* The **KEK** (key-encryption key) only exists in memory while the keystore is being opened.
+* The **AAD** is the canonical JSON of `format`, `version`, `metadata` and `kdf_parameters`. Any change to the key ID, key type, status, expiration date, salt or iteration count makes the GCM tag check fail.
+* Files are written atomically and with owner-only permissions (`0600` on Linux/macOS).
+
+## 2. Password-based access to keys
+
+| Requirement | How the system meets it |
+|---|---|
+| Prompt for password when accessing private keys | `prompt_password()` / `unlocked_key()` use `getpass`: the password is not echoed and does not end up in shell history (D1, *Password entry*). |
+| Derive the encryption key using a KDF | `_derive_key()` uses the salt and iteration count **stored in the keystore**, so old keystores still open if the default changes. |
+| Decrypt the private key only when needed | `with keystore.unlocked_key(path) as priv:` decrypts the key for one operation and drops the reference when the block ends. |
+| Do NOT store the password | The password is never written to disk, logs or the keystore (checked by `test_password_is_prompted_and_not_stored`). |
+| Do NOT cache decrypted keys indefinitely | There is no key cache: every operation asks for the password again. |
+
+Example (decrypting a file shared with Alice):
+
+```python
+from vault.keystore import SecureKeyStore
+from vault.crypto_module import SecureEncryptionModule
+
+keystore = SecureKeyStore()
+vault = SecureEncryptionModule()
+
+with keystore.unlocked_key("keystore/Alice_p256.json") as alice_priv:   # asks for the password
+    plaintext = vault.decrypt_file(container, alice_priv, "Alice", alice_sign_pub)
+# here the decrypted private key is no longer referenced
+```
+
+## 3. KDF selection and parameters
+
+| Parameter | Value | Reason |
+|---|---|---|
+| KDF | PBKDF2-HMAC-SHA256 | Standard (NIST SP 800-132, RFC 8018), available in every version of `cryptography`, already used by the team. |
+| Iterations | **600,000** (default **and minimum**) | OWASP Password Storage Cheat Sheet value for PBKDF2-HMAC-SHA256. Around 0.1–0.5 s per unlock: unnoticeable for a user, very expensive for an attacker testing millions of passwords. |
+| Salt | 16 random bytes per keystore (`os.urandom`) | Two users with the same password get different KEKs, and precomputed (rainbow) tables are useless. |
+| Output | 32 bytes | AES-256 key. |
+| Password policy | At least 12 characters when a keystore is created | Reduces the risk of trivial dictionary passwords. |
+
+**Downgrade protection:** a keystore that asks for fewer iterations than `min_iterations` is rejected *before* deriving anything, so an attacker cannot edit the file to make brute force cheaper.
+
+**Upgrade path:** PBKDF2 is CPU-hard but not memory-hard, so GPUs can attack it faster than Argon2id or scrypt. The `kdf_parameters.algorithm` field and the `version` field allow migrating to Argon2id later: the user opens the keystore with the old KDF and `change_password()` re-encrypts it.
+
+## 4. Key storage format
+
+Each private key is stored in its own JSON file:
+
+```text
+demo_files/
+├── keystore/
+│   ├── Alice_p256.json        # encryption key (P-256), encrypted
+│   ├── Alice_ed25519.json     # signing key (Ed25519), encrypted
+│   └── Bob_p256.json
+├── backup_usb/                # encrypted backups
+│   └── Alice_20261116T045348Z.keystore.json
+└── Alice_public.pem           # public keys (not secret)
+```
+
+```json
 {
+    "format": "SDDV-KEYSTORE",
+    "version": 1,
     "metadata": {
-        "key_id": "Alice_P256",
+        "key_id": "Alice",
         "key_type": "P-256",
-        "encryption": "AES-256-GCM"
+        "purpose": "encryption",
+        "encryption": "AES-256-GCM",
+        "public_key": "-----BEGIN PUBLIC KEY-----\n...",
+        "public_key_fingerprint": "p256:f70ebd014dbfe8d8720df57ecc718bbcfb96584876476be01e56eed7fc32bb6d",
+        "created_at": "2026-11-16T04:53:47Z",
+        "expires_at": null,
+        "status": "active"
     },
     "kdf_parameters": {
         "algorithm": "PBKDF2HMAC-SHA256",
         "iterations": 600000,
-        "salt": "<base64_string>"
+        "key_length": 32,
+        "salt": "<base64, 16 bytes>"
     },
-    "nonce": "<base64_string>",
-    "encrypted_private_key": "<base64_string>",
-    "tag": "<base64_string>"
+    "nonce": "<base64, 12 bytes>",
+    "encrypted_private_key": "<base64>",
+    "tag": "<base64, 16 bytes>"
 }
+```
 
+| Field | Meaning | Protected by |
+|---|---|---|
+| `format`, `version` | Identifies the file type and version of the format | AAD |
+| `metadata.key_id` | Identity used in the recipient list of D3 containers | AAD |
+| `metadata.key_type` / `purpose` | `P-256` → `encryption`, `Ed25519` → `signing` | AAD |
+| `metadata.public_key`, `public_key_fingerprint` | Public key and its SHA-256 fingerprint (`p256:` / `ed25519:` — the same value as `signer_id` in D5) | AAD + identity check |
+| `metadata.created_at`, `expires_at`, `status` | Lifecycle (`active`, `retired`, `compromised`) | AAD |
+| `kdf_parameters` | Salt and KDF parameters needed to derive the KEK | AAD + minimum iterations |
+| `nonce`, `encrypted_private_key`, `tag` | AES-256-GCM output (PKCS#8 private key encrypted) | GCM tag |
 
-Integrity constraint: The key_id is passed as Associated Data (AAD) into the AES-GCM cipher. If an attacker modifies the keystore (e.g., swapping or renaming keys), the AES-GCM tag verification will fail, and the system will reject the keystore.
+Parsing is strict: unknown or missing fields, duplicated JSON keys, invalid Base64, wrong lengths, unknown KDF or format are rejected.
 
-Backup strategy
+## 5. Key lifecycle
 
-Because the encrypted private key and all necessary derivation parameters (like the salt, algorithm, and nonce) are self-contained within the JSON file, the backup strategy is straightforward. Users can safely back up their keys by copying the .json files to external drives or cloud storage. Restoration only requires access to the JSON file and the user's memorized password.
+| Stage | What the system does | Function |
+|---|---|---|
+| **Generation** | Keys are generated locally with the OS CSPRNG (`ec.generate_private_key(SECP256R1)`, `Ed25519PrivateKey.generate()`) and encrypted **immediately** into the keystore. Only the public key is exported. | `encrypt_and_save_key()` |
+| **Usage** | The password is requested, the key is decrypted for one operation (decrypt a file / sign a container) and then discarded. The system checks that the decrypted key matches the type and fingerprint in the metadata. Only `active` and non-expired keys are used for new operations. | `unlocked_key()`, `load_and_decrypt_key()` |
+| **Password change** | The same key is re-encrypted with a new password, a new salt and a new nonce. | `change_password()` |
+| **Rotation** | A new key of the same type is generated and stored as `active`; the old keystore becomes `retired`. Retired keys can still open **old** files (`allow_inactive=True`) but are refused by default. The new public key must be sent to the other users, and new files are shared with the new key ID. | `rotate_key()` |
+| **Compromise response** | 1) Mark the key as `compromised` → the system refuses it forever (even with `allow_inactive=True`). 2) Generate a new key pair and distribute the new public key/fingerprint out-of-band. 3) Ask senders to re-share important files with the new key (new file key, new ECIES wrap). 4) For a signing key: tell recipients to stop trusting the old `signer_id`. | `mark_compromised()` |
+| **Expiration** (optional) | `expires_at` can be set when the key is created. After that date the key is refused for normal use and must be rotated; it can still open old files with `allow_inactive=True`. | `encrypt_and_save_key(..., expires_at=...)` |
 
-Security assumptions
+> **Limitation:** revocation is local (there is no revocation server, which D1 left out of scope). Other users learn about a rotation or compromise through the same out-of-band channel used to exchange public keys. If the password is unknown (e.g. the laptop was stolen) the user cannot edit the stolen copy; they simply stop using that key, generate a new one and notify their contacts.
 
-Our key management design operates under two main assumptions:
+## 6. Key backup and recovery
 
-Password secrecy: The user's password is memorized and never stored on the local disk or written in plaintext anywhere on the system.
+* **Backup:** `backup_keystore(path, backup_dir)` copies the **encrypted** keystore to another place (USB drive, external disk, cloud folder). It does not need the password and never decrypts the key, so the backup is as safe as the original: someone who steals the backup still needs the password.
+* **Restore:** `restore_keystore(backup, password, dest)` first **verifies** the backup (correct password, intact GCM tag, consistent key identity) and only then writes it, with `0600` permissions. A wrong password or a modified backup restores nothing, and an existing keystore is not overwritten unless `overwrite=True`.
+* **Recommendations:** keep at least one offline copy, back up again after every rotation or password change, and remember that **the password is not recoverable**: if it is forgotten, the backup is useless (this is intentional — there is no back door).
 
-Password complexity: The user chooses a strong, high-entropy password that cannot be easily guessed in a dictionary or brute-force attack.
+## 7. Access control via keys
 
-Security Discussion
+* **Only users with the correct private key can decrypt.** The file key of a container (D3) is wrapped with ECIES for each recipient's public key, so opening a file requires the matching private key, which only exists encrypted inside its owner's keystore. Without the keystore **and** the password there is no private key, and without the private key there is no file key.
+* **Sharing still depends on encrypted file keys (D3).** D6 does not change the container: it only changes where the private key comes from (`unlocked_key()` instead of a plaintext PEM).
+* **Key identity is consistent.** Every keystore stores `key_id`, `key_type`, `purpose` and the public key fingerprint, and all of them are authenticated. After decrypting, the system checks that the private key really matches that type and fingerprint. The Ed25519 fingerprint is exactly the `signer_id` used in D5.
+* **No ambiguity in key usage.** P-256 keys are only for encryption (ECIES) and Ed25519 keys are only for signing; a key cannot be stored under the wrong type (`test_key_type_mismatch_rejected`) and each user has one active key per purpose.
 
-Why encrypt private keys?
+## 8. Threat model alignment (revisiting D1)
 
-If an attacker bypasses the secure vault and gains access to the local file system, discovering a plaintext private key means the entire system's security (AES-GCM, ECIES, Ed25519) instantly collapses. Encrypting the private keys shifts the security dependency from physical file possession to knowledge. Even if the keystore is stolen, the keys remain mathematically inaccessible without the user's password.
+D1 lists *private keys* and *passwords* as assets and requires *"Confidentiality of private keys: private keys must never leave the user local keystore in plaintext"*. D1 also assumed that *"the local client environments ... are secure and free of malware"*. D6 keeps that assumption but now also considers what happens when part of it fails.
 
-What happens if password is weak?
+**What if an attacker steals the keystore?**
+They get the salt, KDF parameters, metadata and the encrypted key, but **not** the private key. To use it they must guess the password offline, and each guess costs 600,000 HMAC-SHA256 iterations. With a strong password this is not feasible. Modifying the keystore (e.g. lowering the iterations, swapping the key ID or pasting another user's ciphertext) is detected. The public metadata (key ID, public key, dates) is visible, which is acceptable because it is not secret.
 
-If a user chooses a weak password (e.g., "123456" or "password"), an attacker who steals the JSON keystore can easily perform an offline dictionary attack. Even though the 600,000 PBKDF2 iterations slow down the guessing process, the very low entropy of a weak password allows the attacker to guess it relatively quickly. Once guessed, they can derive the AES key, decrypt the private key, and completely break the vault's security.
+**What if a password is weak?**
+The KDF only slows the attack down; it cannot add entropy. A password from a dictionary list can be found in hours or days with GPUs, and then the attacker gets the private key and can decrypt every file shared with that key and sign as the user. Mitigations: minimum length of 12 characters, long passphrases, high iteration count, random salts (no precomputation), and rotating the key if a weak password was used.
 
-What are our system limitations?
+**What if a device is compromised?**
+If malware runs on the user's computer (keylogger, memory dump, root access), it can capture the password while it is typed or read the private key from RAM while it is in use. D6 cannot prevent this. It limits the damage: the key is not on disk in plaintext and is not kept in memory longer than needed, and after the incident the user can mark the key as compromised and rotate it.
 
-Our primary system limitation is that it relies entirely on the integrity of the local execution environment (the user's OS and RAM).
+### What D6 protects against
 
-If the endpoint is compromised by active malware (such as a keylogger, rootkit, or memory scraper), the system cannot protect the keys.
+* Theft or copy of the keystore or of its backups (disk, USB, cloud folder).
+* Offline brute force with strong passwords; precomputed tables (unique salts).
+* Tampering with the keystore: metadata, KDF parameters, ciphertext, swapped keys, iteration downgrade.
+* Using a key for the wrong purpose, or a retired, expired or compromised key.
+* Accidental exposure of plaintext keys in the repository or demo files (the old `*_private.pem` files no longer exist).
 
-An attacker could log the password as the user types it into the console, or dump the plaintext private key directly from RAM during the brief milliseconds it is decrypted for a cryptographic operation.
+### What D6 does NOT protect against (assumptions)
 
-Conclusion: The system successfully protects against offline attacks and physical storage theft, but it cannot defend against a deeply compromised host endpoint.
+* A compromised endpoint (malware, keylogger, memory dump, root/admin access).
+* Weak or reused passwords chosen despite the policy, or passwords disclosed by the user.
+* A forgotten password (keys are unrecoverable by design).
+* Python cannot securely wipe memory: objects may stay in RAM until garbage-collected.
+* Attackers who delete keystores and backups (availability).
+* Distribution of revocations to other users (there is no PKI or revocation server).
+
+## 9. Automated tests
+
+```bash
+python -m unittest tests.test_key_management -v
+```
+
+The tests use 1,000 iterations only to run fast; the production default and minimum is 600,000.
+
+| Required test | Test | What it checks |
+|---|---|---|
+| Correct password → access granted | `test_1_correct_password_access_granted` | The recovered key is identical to the original. |
+| Wrong password → access denied | `test_2_wrong_password_access_denied` | `ValueError` and no key returned. |
+| Modified keystore → failure | `test_3_modified_keystore_failure` | Ciphertext, tag, nonce, salt, key ID, key type, status, expiration, iterations or an extra field changed → rejected. |
+| Backup → restore works | `test_4_backup_restore_works` | Backup, delete the original, restore with the password, same key. |
+| Stolen keystore alone → cannot decrypt | `test_5_stolen_keystore_alone_cannot_decrypt` | The file has no plaintext key; password guesses fail; a file shared with Alice cannot be opened without her real key; with keystore + password it can. |
+
+Extra tests (`TestKeyLifecycle`): KDF downgrade, default parameters, weak password rejected, unique salt/nonce, `0600` permissions, password asked with `getpass` and never stored, fingerprint and key identity (P-256 and Ed25519 = D5 `signer_id`), key-type mismatch, swapped ciphertext, password change, rotation (old files still open), compromised key refused, expiration, restore verifies the backup and does not overwrite by default.
+
+## 10. Security discussion
+
+**Why encrypt private keys?**
+Because the private key is the root of all the other guarantees: whoever has Alice's P-256 key can unwrap the file key of every file shared with her (confidentiality, D3), and whoever has her Ed25519 key can sign as her (authenticity, D5). Disks, laptops and backups get lost or copied, so the system cannot rely on the storage being private. Encrypting the key turns "having the file" into "having the file **and** knowing the password".
+
+**What happens if the password is weak?**
+The protection is only as strong as the password. PBKDF2 makes every guess expensive and salts prevent precomputation, but a password from a dictionary can still be found with an offline attack, and then the private key and all files shared with it are exposed. That is why the system enforces a minimum length, recommends passphrases, and supports password change and key rotation.
+
+**What are the system limitations?**
+* It cannot protect against malware on the user's device or a user who reveals the password.
+* PBKDF2 is not memory-hard (Argon2id would resist GPU attacks better; the format allows migrating).
+* Python cannot guarantee that the key is wiped from memory.
+* Revocation and rotation are local and must be communicated out-of-band.
+* Metadata (key ID, public key, dates, status) is readable without the password; it is authenticated, not encrypted.
+* A forgotten password means the key and the files that depend on it are lost.
