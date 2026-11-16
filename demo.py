@@ -1,5 +1,5 @@
 """
-Demo - Secure Digital Document Vault (D3: Hybrid Encryption + D5: Digital Signatures)
+Demo - Secure Digital Document Vault (D3: Hybrid Encryption + D5: Digital Signatures + D6: Key Management)
 
 Usage (from the repository root):
     python demo.py
@@ -10,15 +10,25 @@ Shows, in order:
   3. Non-recipient (Eve)        -> Cannot decrypt
   4. Modified file              -> Signature check fails, file rejected
   5. Digital signatures (D5)    -> Wrong key / forged / unsigned -> rejected
+  6. Key management (D6)        -> Encrypted keystore, password prompt, tampering,
+                                   backup/restore, rotation and compromise
+
+D6: private keys are NEVER written in plaintext. Each user chooses a password and the
+private keys are saved in demo_files/keystore/*.json (AES-256-GCM + PBKDF2-HMAC-SHA256).
 """
 import base64
 import os
 import json
+import shutil
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives import serialization
 from vault.crypto_module import SecureEncryptionModule
+from vault.keystore import SecureKeyStore, prompt_password
 
 DEMO_DIR = "demo_files"
+KEYSTORE_DIR = os.path.join(DEMO_DIR, "keystore")
+BACKUP_DIR = os.path.join(DEMO_DIR, "backup_usb")
+keystore = SecureKeyStore()   # PBKDF2-HMAC-SHA256, 600,000 iterations
 
 GREEN = "\033[92m"
 RED = "\033[91m"
@@ -77,39 +87,51 @@ def show_hex_file(path, n=96):
     print(f"{YELLOW}  --- end ---{RESET}")
 
 
-def list_demo_dir():
-    """Lists the files in demo_files/, like 'dir' / 'ls -l'."""
-    print(f"{YELLOW}  --- contents of {DEMO_DIR}/ ---{RESET}")
-    for name in sorted(os.listdir(DEMO_DIR)):
-        size = os.path.getsize(os.path.join(DEMO_DIR, name))
-        print(f"  {size:>6} bytes  {name}")
+def list_demo_dir(directory=DEMO_DIR):
+    """Lists the files in a demo folder, like 'dir' / 'ls -l'."""
+    print(f"{YELLOW}  --- contents of {directory}/ ---{RESET}")
+    for name in sorted(os.listdir(directory)):
+        path = os.path.join(directory, name)
+        if os.path.isdir(path):
+            print(f"  {'<DIR>':>6}        {name}/")
+        else:
+            print(f"  {os.path.getsize(path):>6} bytes  {name}")
 
 
-def new_user(name):
-    """Creates a P-256 (encryption) key pair and saves both keys as PEM files."""
+def keystore_path(name, kind="p256"):
+    return os.path.join(KEYSTORE_DIR, f"{name}_{kind}.json")
+
+
+def ask_new_password(name):
+    """D6: asks (without echo) for a new keystore password until it meets the policy."""
+    while True:
+        try:
+            password = prompt_password(
+                f"  Choose a password for {name}'s keystore (min 12 characters): ", confirm=True)
+            keystore._check_password_policy(password)
+            return password
+        except ValueError as e:
+            fail(str(e))
+
+
+def new_user(name, password):
+    """Creates a P-256 (encryption) key pair: private key -> encrypted keystore, public key -> PEM."""
     priv = ec.generate_private_key(ec.SECP256R1())
     pub = priv.public_key()
-    with open(os.path.join(DEMO_DIR, f"{name}_private.pem"), "wb") as f:
-        f.write(priv.private_bytes(
-            serialization.Encoding.PEM,
-            serialization.PrivateFormat.PKCS8,
-            serialization.NoEncryption()))
+    keystore.encrypt_and_save_key(priv, password, name, "P-256", keystore_path(name, "p256"))
     with open(os.path.join(DEMO_DIR, f"{name}_public.pem"), "wb") as f:
         f.write(pub.public_bytes(
             serialization.Encoding.PEM,
             serialization.PublicFormat.SubjectPublicKeyInfo))
-    info(f"{name}: key pair created -> {DEMO_DIR}/{name}_private.pem, {name}_public.pem")
+    info(f"{name}: key pair created -> {keystore_path(name, 'p256')} (ENCRYPTED), {name}_public.pem")
     return priv, pub
 
 
-def new_signing_key(name):
-    """D5: Creates an Ed25519 (signature) key pair and saves both keys as PEM files."""
+def new_signing_key(name, password):
+    """D5/D6: Creates an Ed25519 (signature) key pair; the private key goes to the encrypted keystore."""
     sign_priv, sign_pub = SecureEncryptionModule.generate_signing_keypair()
-    with open(os.path.join(DEMO_DIR, f"{name}_sign_private.pem"), "wb") as f:
-        f.write(sign_priv.private_bytes(
-            serialization.Encoding.PEM,
-            serialization.PrivateFormat.PKCS8,
-            serialization.NoEncryption()))
+    keystore.encrypt_and_save_key(sign_priv, password, f"{name}-sign", "Ed25519",
+                                  keystore_path(name, "ed25519"))
     with open(os.path.join(DEMO_DIR, f"{name}_sign_public.pem"), "wb") as f:
         f.write(sign_pub.public_bytes(
             serialization.Encoding.PEM,
@@ -144,17 +166,124 @@ def flip_b64(value):
     return base64.b64encode(bytes(raw)).decode("ascii")
 
 
+def show_keystore(path):
+    """D6: prints a keystore file with long values shortened."""
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    data["metadata"]["public_key"] = data["metadata"]["public_key"][:40] + "..."
+    data["encrypted_private_key"] = data["encrypted_private_key"][:32] + "..."
+    print(f"{YELLOW}  --- {path} ---{RESET}")
+    for line in json.dumps(data, indent=4).splitlines():
+        print(f"  {line}")
+    print(f"{YELLOW}  --- end of file ---{RESET}")
+
+
+def key_management_demo(vault, container, alice_sign_pub):
+    """D6: encrypted keystore, password prompt, tampering, backup/restore, rotation, compromise."""
+    alice_ks = keystore_path("Alice", "p256")
+
+    title("6) KEY MANAGEMENT (D6)  (private keys are never stored in plaintext)")
+    info("Case A: Alice's keystore on disk (no plaintext private key, only ciphertext):")
+    show_keystore(alice_ks)
+    with open(alice_ks, "rb") as f:
+        if b"PRIVATE KEY" not in f.read():
+            ok("The file does not contain a plaintext private key")
+    pause()
+
+    info("\nCase B: Alice opens the shared file. Her key is decrypted ONLY for this operation:")
+    try:
+        with keystore.unlocked_key(alice_ks) as alice_key:      # asks the password (getpass)
+            ok("Correct password -> access granted")
+            try_decrypt(vault, container, alice_key, "Alice", "Alice", alice_sign_pub)
+        info("  (the decrypted key is discarded when the 'with' block ends)")
+    except ValueError as e:
+        fail(f"Access denied -> {e}")
+
+    info("\nCase C: now type a WRONG password for Alice's keystore:")
+    try:
+        with keystore.unlocked_key(alice_ks):
+            fail("A wrong password was accepted (unexpected)")
+    except ValueError as e:
+        ok(f"Wrong password -> access denied: {e}")
+    pause()
+
+    info("\nCase D: an attacker edits the keystore metadata (key_id 'Alice' -> 'Eve'):")
+    tampered_ks = os.path.join(KEYSTORE_DIR, "Alice_p256_TAMPERED.json")
+    with open(alice_ks, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    data["metadata"]["key_id"] = "Eve"
+    with open(tampered_ks, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=4)
+    info(f"  saved as {tampered_ks}. Type Alice's REAL password:")
+    try:
+        with keystore.unlocked_key(tampered_ks):
+            fail("Tampered keystore accepted (unexpected)")
+    except ValueError as e:
+        ok(f"Modified keystore -> rejected: {e}")
+    os.remove(tampered_ks)
+    pause()
+
+    info("\nCase E: backup -> the computer is lost -> restore:")
+    backup = keystore.backup_keystore(alice_ks, BACKUP_DIR)
+    ok(f"Encrypted backup created (no password needed) -> {backup}")
+    os.remove(alice_ks)
+    info(f"  Original keystore deleted (simulated disk failure) -> {alice_ks}")
+    info("  Type Alice's password to verify and restore the backup:")
+    try:
+        meta = keystore.restore_keystore(backup, prompt_password("  Password: "), alice_ks)
+        ok(f"Backup verified and restored -> {alice_ks} (key_id={meta['key_id']}, "
+           f"{meta['public_key_fingerprint'][:21]}...)")
+    except ValueError as e:
+        fail(f"Restore refused -> {e}")
+        shutil.copyfile(backup, alice_ks)
+    pause()
+
+    info("\nCase F: key rotation. Alice gets a new P-256 key, the old one is 'retired':")
+    new_ks = keystore_path("Alice", "p256_v2")
+    try:
+        new_pub = keystore.rotate_key(alice_ks, prompt_password("  Alice's password: "), new_ks, "Alice-v2")
+        ok(f"New active key -> {new_ks}")
+        info(f"  old: {keystore.read_metadata(alice_ks)['status']:<8} {keystore.read_metadata(alice_ks)['public_key_fingerprint'][:30]}...")
+        info(f"  new: {keystore.read_metadata(new_ks)['status']:<8} {keystore.read_metadata(new_ks)['public_key_fingerprint'][:30]}...")
+        with open(os.path.join(DEMO_DIR, "Alice-v2_public.pem"), "wb") as f:
+            f.write(new_pub.public_bytes(serialization.Encoding.PEM,
+                                         serialization.PublicFormat.SubjectPublicKeyInfo))
+        info("  The new public key (Alice-v2_public.pem) must be sent to the other users.")
+        info("  The retired key can only be used to open OLD files (allow_inactive=True).")
+    except ValueError as e:
+        fail(str(e))
+
+    info("\nCase G: Eve's laptop was stolen -> her key is marked as COMPROMISED:")
+    eve_ks = keystore_path("Eve", "p256")
+    try:
+        keystore.mark_compromised(eve_ks, prompt_password("  Eve's password: "))
+        ok("Eve's key revoked (status = compromised)")
+        keystore.load_and_decrypt_key(eve_ks, prompt_password("  Eve's password again: "),
+                                      allow_inactive=True)
+        fail("Compromised key was accepted (unexpected)")
+    except ValueError as e:
+        ok(f"Compromised key -> refused: {e}")
+    print()
+    list_demo_dir(KEYSTORE_DIR)
+
+
 def main():
     os.makedirs(DEMO_DIR, exist_ok=True)
+    os.makedirs(KEYSTORE_DIR, exist_ok=True)
     vault = SecureEncryptionModule()
 
     # ---------------------------------------------------------------
     title("SETUP: users and original file")
-    alice_priv, alice_pub = new_user("Alice")
-    bob_priv, bob_pub = new_user("Bob")
-    eve_priv, eve_pub = new_user("Eve")
-    alice_sign_priv, alice_sign_pub = new_signing_key("Alice")
-    eve_sign_priv, eve_sign_pub = new_signing_key("Eve")
+    info("D6: each user chooses a password; private keys are saved ENCRYPTED in the keystore.")
+    password = ask_new_password("Alice")
+    alice_priv, alice_pub = new_user("Alice", password)
+    alice_sign_priv, alice_sign_pub = new_signing_key("Alice", password)
+    password = ask_new_password("Bob")
+    bob_priv, bob_pub = new_user("Bob", password)
+    password = ask_new_password("Eve")
+    eve_priv, eve_pub = new_user("Eve", password)
+    eve_sign_priv, eve_sign_pub = new_signing_key("Eve", password)
+    del password   # D6: the password is never stored
 
     plain_path = os.path.join(DEMO_DIR, "secret.txt")
     with open(plain_path, "wb") as f:
@@ -287,6 +416,12 @@ def main():
     c = json.loads(container)
     del c["signature"]
     try_decrypt(vault, json.dumps(c).encode(), bob_priv, "Bob", "Bob", alice_sign_pub)
+    pause()
+
+    # ---------------------------------------------------------------
+    # D6: from here on the private keys are only taken from the encrypted keystore
+    del alice_priv, bob_priv, eve_priv, alice_sign_priv, eve_sign_priv
+    key_management_demo(vault, container, alice_sign_pub)
 
     # ---------------------------------------------------------------
     title("SUMMARY")
@@ -295,6 +430,8 @@ def main():
     ok("Non-recipient (Eve) cannot decrypt, not even impersonating Bob")
     ok("Modified file (content, recipients or metadata) -> rejected")
     ok("Wrong public key, forged signature or removed signature -> rejected")
+    ok("Private keys stored only encrypted; wrong password or modified keystore -> rejected")
+    ok("Encrypted backup restored; key rotated; compromised key refused")
     print()
     list_demo_dir()
     print()

@@ -1,2 +1,6 @@
 __pycache__/
 demo_files/
+.pytest_cache/
+keystore/
+backup_usb/
+*.keystore.json
