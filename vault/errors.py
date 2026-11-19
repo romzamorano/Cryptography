@@ -66,3 +66,28 @@ class KeyRevokedError(KeystoreError):
 
 class KeyInactiveError(KeystoreError):
     """The key is retired (rotated) or expired."""
+
+
+# --------------------------------------------------------------------------- trust store / replay
+class TrustStoreError(VaultError):
+    """The trust store (list of contacts and their public keys) is invalid or inconsistent."""
+
+
+class ContactNotFoundError(TrustStoreError):
+    """The contact is not in the trust store."""
+
+
+class KeyChangedError(TrustStoreError):
+    """A contact's key differs from the one already trusted (possible substitution attack)."""
+
+
+class ContactKeyRevokedError(TrustStoreError):
+    """The contact's key was revoked: files signed with it, or new files for it, are refused."""
+
+
+class ReplayError(VaultError):
+    """The container was already accepted before (replayed package)."""
+
+
+class StaleContainerError(ReplayError):
+    """The container's signed timestamp is outside the accepted freshness window."""
