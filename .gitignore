@@ -4,3 +4,4 @@ demo_files/
 keystore/
 backup_usb/
 *.keystore.json
+vault_home/

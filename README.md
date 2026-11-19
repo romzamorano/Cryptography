@@ -3,7 +3,7 @@
 This is the repository for the development of the Cryptography project.
 
 <p align="center">
-  <img src="https://media.giphy.com/media/077i6AULCXc0FKTj9s/giphy.gif" width="480" alt="Animación de computadora">
+  <img src="https://media.giphy.com/media/077i6AULCXc0FKTj9s/giphy.gif" width="480" alt="Computer animation">
 </p>
 
 The team consists of:
@@ -17,25 +17,34 @@ The team consists of:
 
 ## What it does
 
-The **Secure Digital Document Vault** lets a user encrypt a file and share it securely with one or more recipients using **Hybrid Encryption (`AES-GCM-256 + ECIES(P-256)`)**:
+The **Secure Digital Document Vault** is a command-line application to send files securely between users over an **untrusted** shared folder or channel. Everything runs locally; the main program is an **interactive menu** (`vault_cli.py`) where every option is a use case.
 
-* The file is encrypted **once** with a random 256-bit file key (AES-256-GCM).
-* The file key is wrapped **individually for each recipient** with their public key (ECIES: ECDH + HKDF-SHA256 + AES-GCM).
-* The header (metadata + recipient list) is authenticated as **AAD**, so any modification to the file, the metadata or the recipient list makes decryption fail.
-* **(D6)** Private keys are **never stored in plaintext**: they live in a password-protected keystore (PBKDF2-HMAC-SHA256, 600,000 iterations + AES-256-GCM), are decrypted only when needed and support backup/restore, rotation, expiration and compromise response.
-* **(D5)** The creator **signs** the whole container with **Ed25519** (SHA-256 digest of ciphertext + tag + nonce + metadata + recipients + signer ID). The recipient **verifies the signature with the sender's public key before decrypting**, so forged, re-signed, unsigned or tampered files are rejected.
+* **Confidentiality (D2/D3):** each file is encrypted **once** with a fresh random 256-bit file key (**AES-256-GCM**). The file key is wrapped **separately for each recipient** with an ECIES-style construction (**ECDH P-256 + HKDF-SHA256 + AES-256-GCM**), bound to the recipient's key fingerprint and the protocol version.
+* **Integrity and authenticity (D5):** the sender **signs** the whole package with **Ed25519**. The recipient verifies it with the key they **trust** for the expected sender **before** doing anything else, so modified, forged, re-signed or unsigned packages are rejected.
+* **Recipient identity:** recipients are identified by the **SHA-256 fingerprint** of their public key, never by a self-declared name.
+* **Trust, revocation and replay:** each user keeps a **trust store** of contacts (public keys confirmed by fingerprint, key-change detection, rotation and revocation) and a **replay cache** (packages already received are refused; packages older than 30 days are refused).
+* **Key management (D6):** private keys are **never stored in plaintext**: they live in password-protected keystores (**PBKDF2-HMAC-SHA256**, 600,000 iterations + **AES-256-GCM**, whole header authenticated) with rotation, revocation, expiration and verified backup/restore.
+* **Robustness:** every untrusted input is validated before use and every failure raises a specific error (`vault/errors.py`); recovered files are written with sanitized names, only inside the user's inbox and never overwriting.
 
 ## Architecture
 
 ![Hybrid Encryption Architecture](architecture_d3.png)
 
-1. Alice encrypts the file with a fresh **file key** (AES-GCM) → ciphertext + authentication tag.
-2. The file key is encrypted with ECIES for each recipient's public key (Alice, Bob).
-3. The container (metadata, recipients, nonce, ciphertext, tag) is **signed with Ed25519** by the sender and stored as a JSON **secure container**: `{format, version, metadata, recipients, nonce, ciphertext, tag, signer_id, signature}` (see [`D5-Digital_Signatures.md`](D5-Digital_Signatures.md)).
-4. The container travels through an **untrusted** channel/storage where an attacker may read or modify it.
-5. Each recipient first **verifies the signature** with the sender's public key, then uses **their own private key** to unwrap the file key and decrypt. An attacker without a listed private key, a modified container, or a forged signature is rejected.
+1. Alice encrypts the file with a fresh **file key** (AES-256-GCM) → ciphertext + authentication tag.
+2. The file key is wrapped with ECIES for each recipient's **trusted** public key (identified by its fingerprint).
+3. The package `{format, version, metadata, recipients, signer_id, nonce, ciphertext, tag, signature}` is **signed with Ed25519** and left in the **shared folder** (untrusted).
+4. An attacker may read, modify, delete or re-deliver anything in the shared folder.
+5. Bob checks the package structure, that the signer is a key he trusts for Alice, the signature, freshness and replay, finds **his** entry by the fingerprint of his key, unwraps the file key and decrypts. The file is written only if every check succeeds.
 
-The original threat model diagram from Deliverable 1 is in [`D1_Architecture_Threat_Model.md`](D1_Architecture_Threat_Model.md).
+```text
+vault_cli.py  ->  vault/cli.py (menu)  ->  vault/app.py (use cases)  ->  crypto_module.py   (AES-GCM, ECIES, Ed25519)
+                                                                         keystore.py        (encrypted private keys)
+                                       ->  vault/attack_lab.py           trust_store.py     (trusted contacts, revocation)
+                                                                         replay_guard.py    (freshness, replay cache)
+                                                                         errors.py          (specific exceptions)
+```
+
+The threat model, attack scenarios and traceability matrix are in [`D1_Architecture_Threat_Model.md`](D1_Architecture_Threat_Model.md).
 
 ## Documentation by deliverable
 
@@ -45,24 +54,44 @@ The original threat model diagram from Deliverable 1 is in [`D1_Architecture_Thr
 | D2 — Secure Symmetric Encryption Module | [`D2 - Secure Symmetric Encryption Module.md`](D2%20-%20Secure%20Symmetric%20Encryption%20Module.md) |
 | D3 — Hybrid Encryption (multi-recipient) | [`D3-Hybrid_Encryption.md`](D3-Hybrid_Encryption.md) |
 | D4 — Midterm System Presentation & Security Review | [Slides (Genially)](https://view.genially.com/6ae7e53c6fd0bfcb5d875c20) · Demo: [`demo.py`](demo.py) |
-| D5 — Digital Signatures | [`D5-Digital_Signatures.md`](D5-Digital_Signatures.md) |
+| D5 — Digital Signatures (+ trust, revocation, replay) | [`D5-Digital_Signatures.md`](D5-Digital_Signatures.md) |
 | D6 — Secure Key Management | [`D6-Key_Management.md`](D6-Key_Management.md) |
 
 ## Repository structure
 
 ```text
 Cryptography/
-├── .github/workflows/python-tests.yml   # CI: runs unit tests on push / PR
+├── .github/workflows/python-tests.yml   # CI: runs all the tests on push / PR
+├── vault_cli.py                         # MAIN PROGRAM: interactive menu
+├── demo.py                              # Quick scripted demonstration (D4)
 ├── vault/
-│   ├── crypto_module.py                 # SecureEncryptionModule (hybrid encryption engine)
-│   └── keystore.py                      # D6: SecureKeyStore (password-protected private keys)
+│   ├── cli.py                           # Menu: input/output only
+│   ├── app.py                           # Use cases: users, contacts, send, receive, key lifecycle
+│   ├── attack_lab.py                    # Attack scenarios shown step by step in the menu
+│   ├── crypto_module.py                 # AES-256-GCM + ECIES (P-256) + Ed25519 container (v6)
+│   ├── keystore.py                      # Password-protected keystores (PBKDF2 + AES-GCM)
+│   ├── trust_store.py                   # Trusted contacts, public-key bundles, revocation
+│   ├── replay_guard.py                  # Freshness window and replay cache
+│   └── errors.py                        # Exception hierarchy (all are VaultError / ValueError)
 ├── tests/
-│   ├── test_crypto.py                   # D3 security unit tests
-│   ├── test_signatures.py               # D5 digital signature tests
-│   └── test_key_management.py           # D6 key management tests
-├── demo.py                              # Interactive end-to-end demo
-├── architecture_d3.png                  # Architecture diagram (hybrid encryption)
-├── diagrama.png                         # D1 threat model diagram
+│   ├── test_crypto.py                   # D3 hybrid encryption
+│   ├── test_signatures.py               # D5 signatures
+│   ├── test_ecies_validation.py         # Recipient fingerprints, capsule validation, malformed input
+│   ├── test_key_management.py           # D6 keystore and lifecycle
+│   ├── test_keystore_hardening.py       # No overwrite, KDF bounds, password policy, file errors
+│   ├── test_trust_store.py              # Trust establishment, key change, rotation, revocation
+│   ├── test_replay_guard.py             # Freshness window and replay cache
+│   └── integration/                     # Several modules together, with real files
+│       ├── _helpers.py
+│       ├── test_file_sharing_flow.py
+│       ├── test_attack_scenarios.py
+│       ├── test_key_lifecycle_flow.py
+│       ├── test_trust_and_replay_flow.py
+│       ├── test_app_flow.py             # Every use case of the application
+│       ├── test_attack_lab.py           # Every attack of the lab is blocked
+│       └── test_cli_menu.py             # The menu driven with scripted keyboard input
+├── architecture_d3.png
+├── diagrama.png
 ├── requirements.txt
 └── README.md
 ```
@@ -89,84 +118,102 @@ cd Cryptography
 pip install -r requirements.txt
 ```
 
-### 4. Run the demo
+### 4. Run the program (interactive menu)
+
+```bash
+python vault_cli.py
+```
+
+Data is stored in `vault_home/` (ignored by Git). Use `python vault_cli.py --home other_folder` for a separate set of users.
+
+```text
+1. Users and keys            create a user, show keys/fingerprints, publish public keys, change password,
+                             rotate a key, mark a key as compromised, replace it, back up, restore
+2. Contacts                  import a contact's public keys (fingerprints shown and checked), list, revoke
+3. Send a file               encrypt for trusted contacts, sign, leave the package in shared/
+4. Receive / open a file     6 visible checks, then the file is saved in your inbox
+5. Inspect a package         what anybody with access to the storage can see (not verified)
+6. Attack lab                17 attacks from the threat model, each one shown step by step
+7. Run the automated tests
+```
+
+**Typical first session**
+
+1. *Users and keys → Create a user*: create `Alice` and `Bob` (passwords of at least 12 characters, not shown while typing).
+2. *Contacts → Import*: as Alice, import `Bob.pub.json`; as Bob, import `Alice.pub.json`. Compare the fingerprints shown on screen.
+3. *Send a file*: Alice chooses a file and Bob as recipient. The package appears in `vault_home/shared/`.
+4. *Receive / open a file*: Bob chooses the package and Alice as expected sender. The six checks are shown and the file is saved in `vault_home/users/Bob/inbox/`.
+5. *Receive* the same package again → **rejected as a replay**. *Inspect* it to see what an attacker can see.
+6. *Attack lab → A*: runs every attack scenario in a separate sandbox and shows which defense stops each one.
+
+### 5. Quick scripted demo
 
 ```bash
 python demo.py
 ```
 
-Press **Enter** to move between sections. Everything is shown in the terminal, and the generated files are saved in `demo_files/`.
+A guided tour of the cryptography (encryption, sharing, tampering, signatures and key management) used in the D4 presentation. Press **Enter** to move between sections; it asks for a password for Alice, Bob and Eve (at least 12 characters). Each run starts from a clean `demo_files/` folder.
 
-At the start, the demo asks for a password for Alice, Bob and Eve (at least 12 characters, not shown on screen). Their private keys are saved **only encrypted** in `demo_files/keystore/` (D6); only public keys are saved as PEM files. In section 6 the demo asks for the passwords again whenever a private key is needed.
+### 6. Run the tests
 
-| Section | What it shows | Expected result |
+| What | Command | Tests |
 |---|---|---|
-| 1. Encrypt a file | Alice encrypts `secret.txt` and decrypts it | ✅ Decrypted file is identical to the original |
-| 2. Share with another user | File encrypted for Alice **and** Bob | ✅ Bob decrypts with his own private key |
-| 3. Non-recipient | Eve tries with her ID, then impersonating Bob | ❌ Access denied in both cases |
-| 4. Modified file | One bit of ciphertext flipped, recipient list edited, filename changed | ❌ Signature rejected in all cases |
-| 5. Digital signatures (D5) | Valid signature, wrong public key, file re-signed by Eve, signature removed | ✅ / ❌ Only Alice's genuine signature is accepted |
-| 6. Key management (D6) | Encrypted keystore, correct / wrong password, modified keystore, backup → restore, key rotation, compromised key | ✅ Only the right password on an intact, active keystore unlocks the key |
+| Everything (unit + integration) | `python -m unittest discover -s tests -v` | 168 |
+| Only integration tests | `python -m unittest discover -s tests/integration -t . -v` | 64 |
+| One file | `python -m unittest tests.test_trust_store -v` | — |
 
-### 5. Run the unit tests
+The same tests run automatically on GitHub Actions on every push and pull request to `main`. The tests use 1,000 PBKDF2 iterations only to run fast; the program always uses 600,000.
 
-```bash
-python -m unittest discover -s tests -v
-```
+#### Unit tests (one module at a time)
 
-| Test | Verifies |
+| File | Verifies |
 |---|---|
-| `test_1_shared_two_users_both_decrypt` | Both recipients can decrypt the shared file |
-| `test_2_unauthorized_user_cannot_decrypt` | A user not in the recipient list is rejected |
-| `test_3_wrong_private_key_fails` | Using a recipient's ID with another private key fails |
-| `test_4_tampered_recipient_list_fails` | Editing the recipient list breaks the AAD and decryption fails |
-| `test_5_removing_recipient_breaks_access` | Removing a recipient breaks access for everyone |
-| `test_signatures.py` (D5) | Valid signature accepted; modified ciphertext, modified metadata, wrong public key and removed signature rejected (+ forged / re-signed containers) |
-| `test_key_management.py` (D6) | Correct password → access; wrong password → denied; modified keystore → failure; backup → restore; stolen keystore alone → cannot decrypt (+ KDF downgrade, key identity, rotation, compromise, expiration) |
+| `test_crypto.py` | Two recipients decrypt; non-recipient, wrong private key, tampered or removed recipient entries are rejected |
+| `test_signatures.py` | Valid signature accepted; modified ciphertext/metadata/tag/nonce/recipients/signer, wrong key, removed signature, extra field and attacker re-signing rejected; signature verified **before** decrypting |
+| `test_ecies_validation.py` | Recipient `key_id` = key fingerprint; expected fingerprint enforced; access decided by key, not name; capsules: truncated, invalid Base64, point not on the curve, modified ephemeral key / nonce / wrapped key / tag, capsule moved between recipients or files; malformed containers; errors without internal details; no plaintext on failure |
+| `test_key_management.py` | Correct / wrong password, modified keystore, backup → restore, stolen keystore, KDF downgrade, rotation, compromise, expiration |
+| `test_keystore_hardening.py` | No accidental overwrite; huge or corrupted KDF parameters; malformed JSON/Base64/fields; file errors; password policy; verified backups; restore checks the expected key |
+| `test_trust_store.py` | Public-key bundles; expected fingerprints; key-change (substitution) detection; rotation keeps old keys as retired; revoked keys refused forever |
+| `test_replay_guard.py` | Package accepted once; persistent cache; old and future packages rejected; pruning; corrupted cache does not disable the protection |
 
-The same tests run automatically on GitHub Actions on every push to `main`.
+#### Integration tests (`tests/integration/`)
+
+| File | Verifies |
+|---|---|
+| `test_file_sharing_flow.py` | End-to-end sharing with keystores and real files: identical output, no plaintext on disk, binary/large/empty files, three recipients, outsider rejected, a fresh container each time |
+| `test_attack_scenarios.py` | Every field of a stored package modified on disk, corrupted/truncated files, Eve re-signing with her keystore key, file from another sender, stolen keystore, Eve's key on Bob's entry |
+| `test_key_lifecycle_flow.py` | Rotation (old files still open), compromised and expired keys, backup → restore → old file opens, tampered backup, password change |
+| `test_trust_and_replay_flow.py` | Trusted exchange, unknown sender, key substitution, fingerprint mismatch, revoked sender/recipient, sender rotation, replay, per-recipient cache, stale package, failed package not recorded |
+| `test_app_flow.py` | Every use case of the menu: users, contacts, send/receive with the reported steps, nothing written on failure, replay and explicit re-open, path traversal, rotation, compromise and replacement, backup/restore, password change |
+| `test_attack_lab.py` | All 17 attack-lab scenarios are blocked by the expected defense, before decryption |
+| `test_cli_menu.py` | A full session typed into the menu: create users, exchange keys, send, receive, replay, inspect, invalid input, weak password, attack lab |
 
 ---
 
-## Using the module in your own code
+## Using the modules in your own code
 
 ```python
 from cryptography.hazmat.primitives.asymmetric import ec
 from vault.crypto_module import SecureEncryptionModule
 
 vault = SecureEncryptionModule()
-alice_priv = ec.generate_private_key(ec.SECP256R1())   # encryption key (P-256)
-bob_priv = ec.generate_private_key(ec.SECP256R1())
-alice_sign_priv, alice_sign_pub = SecureEncryptionModule.generate_signing_keypair()  # signing key (Ed25519)
+bob_priv = ec.generate_private_key(ec.SECP256R1())                       # encryption key (P-256)
+alice_sign_priv, alice_sign_pub = vault.generate_signing_keypair()       # signing key (Ed25519)
 
 container = vault.encrypt_file(
     b"secret data",
-    recipients=[
-        {"id": "Alice", "public_key": alice_priv.public_key()},
-        {"id": "Bob", "public_key": bob_priv.public_key()},
-    ],
+    recipients=[{"id": "Bob", "public_key": bob_priv.public_key()}],     # key_id = SHA-256 fingerprint
     filename="secret.txt",
     signer_private_key=alice_sign_priv,
 )
-
-plaintext = vault.decrypt_file(container, bob_priv, "Bob", alice_sign_pub)   # works
-# vault.decrypt_file(container, bob_priv, "Bob", eve_sign_pub)               # raises ValueError (wrong signer)
+plaintext = vault.decrypt_file(container, bob_priv, None, alice_sign_pub)   # verify, then decrypt
 ```
-
-### Keeping private keys in the encrypted keystore (D6)
 
 ```python
-from vault.keystore import SecureKeyStore
+from vault.app import VaultApp
 
-keystore = SecureKeyStore()                                    # PBKDF2-HMAC-SHA256, 600,000 iterations
-keystore.encrypt_and_save_key(bob_priv, "a long passphrase!", "Bob", "P-256", "keystore/Bob_p256.json")
-del bob_priv                                                   # the key now exists only encrypted
-
-with keystore.unlocked_key("keystore/Bob_p256.json") as priv:  # asks for the password (getpass)
-    plaintext = vault.decrypt_file(container, priv, "Bob", alice_sign_pub)
-
-backup = keystore.backup_keystore("keystore/Bob_p256.json", "backup_usb")             # encrypted copy
-keystore.restore_keystore(backup, "a long passphrase!", "keystore/Bob_p256.json", overwrite=True)
+app = VaultApp("vault_home")                        # the same use cases as the menu
+app.create_user("Alice", "a long passphrase here")
 ```
 
-See [`D6-Key_Management.md`](D6-Key_Management.md) for the format, lifecycle (rotation, compromise, expiration) and threat-model discussion.
+See the deliverable documents for the format of the container, the keystore, the trust store and the security analysis.
