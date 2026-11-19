@@ -2,7 +2,7 @@
 
 This is the repository for the development of the Cryptography project.
 
-> **Note:** This document describes the container as it was delivered in D3. Since D5, the container is a signed JSON document; the current format is described in [`D5-Digital_Signatures.md`](D5-Digital_Signatures.md#container-format-d5).
+> **Note:** This document describes the container as it was delivered in D3. Since D5, the container is a signed JSON document; the current format is described in [`D5-Digital_Signatures.md`](D5-Digital_Signatures.md#container-format-d5). The final hardened version (recipient fingerprints, fixed-size capsules, context binding) is described in [Update for the Final System](#update-for-the-final-system-container-v6).
 
 The team consists of:
 * Carballo Ramírez Hanny
@@ -130,4 +130,104 @@ Run the tests locally with:
 
 ```bash
 python -m unittest discover -s tests -v
+```
+
+---
+
+## Update for the Final System (container v6)
+
+This section describes how the D3 feedback was addressed in `vault/crypto_module.py`.
+
+### Complete hybrid encryption workflow
+
+Two different symmetric keys are involved and must not be confused:
+
+| Key | What it is | How it is created | What it protects | Lifetime |
+|---|---|---|---|---|
+| **DEK** (file key, `file_key`) | Random 256-bit AES key | `AESGCM.generate_key(256)` (OS CSPRNG) | The **file contents** (AES-256-GCM) | One file |
+| **KEK** (key-encryption key) | 256-bit AES key derived per recipient | ECDH shared secret → HKDF-SHA256 | The **DEK** of one recipient (AES-256-GCM) | One recipient of one file |
+
+**Sender (encrypt):**
+1. Validate the recipient list: non-empty, P-256 public keys only, unique labels and unique keys. If the caller provides the expected fingerprint (e.g. from the trust store), the key must match it.
+2. Compute each recipient's **key identifier**: `key_id = "p256:" + SHA-256(uncompressed X9.62 public point)`.
+3. Generate a fresh **DEK** and a random 96-bit nonce.
+4. For each recipient:
+   1. Generate an **ephemeral** P-256 key pair.
+   2. **ECDH**: `shared = ECDH(ephemeral_private, recipient_public)`.
+   3. **Context**: `ctx = "SDDV-v6/dek-wrap/" || key_id || "/" || ephemeral_point`.
+   4. **HKDF-SHA256**: `KEK = HKDF(shared, length=32, salt=None, info=ctx)`.
+   5. **Wrap**: `wrapped = AES-256-GCM(KEK, wrap_nonce, DEK, aad=ctx)`.
+   6. Capsule = `ephemeral_point (65 B) || wrap_nonce (12 B) || wrapped DEK + tag (48 B)` = **125 bytes**.
+5. Encrypt the file **once** with the DEK. The header (format, version, metadata, recipients, signer ID) is the AES-GCM AAD.
+6. Sign the whole container with Ed25519 (D5).
+
+**Recipient (decrypt):**
+1. Parse and validate the container structure (`parse_container`).
+2. **Verify the signature** with the trusted sender key (D5). Nothing else happens if it fails.
+3. Compute the fingerprint of **my own** public key and look for the entry with that `key_id`. The human-readable `id` is only a label: it never decides access.
+4. Validate the capsule: exact length (125 bytes), uncompressed point prefix `0x04`, and point **on the P-256 curve** (`from_encoded_point` rejects invalid points, preventing invalid-curve attacks).
+5. ECDH with my private key → HKDF with the same context → KEK → unwrap the DEK (AES-GCM verifies the tag).
+6. Decrypt the file with the DEK, authenticating the header as AAD. Only if every step succeeds is plaintext returned.
+
+### Recipient identity and public-key binding
+
+| Before (D3) | Now (v6) |
+|---|---|
+| `{"id": "Bob", "encrypted_key": ...}`: the `id` was free text chosen by the caller, not linked to the key | `{"id": "Bob", "key_id": "p256:<sha256>", "encrypted_key": ...}`: `key_id` is computed from the public key itself |
+| Decryption looked up the entry by the name the user typed | Decryption looks up the entry by the fingerprint of the private key being used |
+| A key labeled with someone else's name was accepted | If the expected fingerprint is known, a mismatching key is rejected **before** encrypting (`RecipientError`) |
+
+A fingerprint **identifies** a key but does not prove who owns it. Ownership is established when the public key is exchanged out of band and its fingerprint is compared (see the trust store in [`D5-Digital_Signatures.md`](D5-Digital_Signatures.md)).
+
+### Context binding of the key wrapping
+
+The fixed HKDF `info=b"ecies-key-wrap"` and the empty AES-GCM AAD of D3 were replaced by the context `ctx` above, used **both** as HKDF `info` and as the AAD of the key wrap:
+
+* **Protocol label and version** (`SDDV-v6/dek-wrap/`): keys derived for this purpose cannot collide with keys derived for any other operation or format version (domain separation).
+* **Recipient key fingerprint**: a capsule created for Bob cannot be moved into Carol's entry (Carol derives a different KEK). Tested by `test_capsule_moved_to_other_recipient_rejected`.
+* **Ephemeral public key**: binds the capsule to its own ECDH exchange, as in standard ECIES.
+
+### Validation and error handling
+
+| Input | Check | Error |
+|---|---|---|
+| Container bytes | UTF-8, JSON, no duplicated keys, exact field set, format/version/algorithms | `ContainerFormatError` |
+| Signature | Present, Base64, 64 bytes, expected signer, valid Ed25519 | `SignatureError` |
+| Recipient entries | Exact fields `id`, `key_id`, `encrypted_key`, all strings | `ContainerFormatError` |
+| Capsule | Strict Base64, exactly 125 bytes, `0x04` prefix, point on curve | `ContainerFormatError` |
+| Key wrap / file | AES-GCM tag | `IntegrityError` |
+| My key not listed | Fingerprint lookup | `AccessDeniedError` |
+
+All errors inherit from `VaultError` (a `ValueError`) and are raised `from None`, so no internal exception details are exposed. Tests: [`tests/test_ecies_validation.py`](tests/test_ecies_validation.py).
+
+### Container v6 layout
+
+```json
+{
+  "format": "SDDV",
+  "version": 6,
+  "metadata": {
+    "filename": "report.txt",
+    "algorithm": "AES-256-GCM",
+    "key_wrap": "ECIES-P256-HKDF-SHA256-AES-256-GCM",
+    "signature_algorithm": "Ed25519",
+    "timestamp": 1763400000
+  },
+  "recipients": [
+    {"id": "Bob", "key_id": "p256:3f1c...", "encrypted_key": "<Base64, 125 bytes>"}
+  ],
+  "signer_id": "ed25519:9a0b...",
+  "nonce": "<Base64, 12 bytes>",
+  "ciphertext": "<Base64>",
+  "tag": "<Base64, 16 bytes>",
+  "signature": "<Base64, 64 bytes>"
+}
+```
+
+```text
+encrypted_key (125 bytes):
++-----------------------------+-------------------+--------------------------------+
+| Ephemeral public key (65 B) | Wrap nonce (12 B) | Wrapped DEK (32 B) + tag (16 B) |
+| 0x04 || X || Y (X9.62)      | random            | AES-256-GCM under the KEK      |
++-----------------------------+-------------------+--------------------------------+
 ```
