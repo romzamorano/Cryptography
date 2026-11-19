@@ -89,3 +89,33 @@ An attacker who has **full read and write access to the encrypted container** (s
 - Try to decrypt with a different key → authentication fails and no plaintext is released.
 
 Out of scope for D2: an attacker who has stolen the key or compromised the owner's machine, and sharing with other users (addressed in D3).
+
+---
+
+## 5. Random Nonces: Probability of Collision and Per-Key Usage Limits
+
+AES-GCM nonces in this project are **random** 96-bit values (`os.urandom(12)`), not counters. Their uniqueness is therefore **probabilistic**, not guaranteed:
+
+* By the birthday bound, after encrypting *q* messages with the **same key**, the probability that two of them share a nonce is approximately **q² / 2⁹⁷**.
+* NIST SP 800-38D (§8.3) requires that the probability of a repeated IV stays below 2⁻³², which limits random 96-bit IVs to at most **2³² encryptions per key**. With q = 2³², the collision probability is about 2⁶⁴ / 2⁹⁷ = 2⁻³³.
+* Each single message is also limited to 2³⁹ − 256 bits (about **64 GiB**) of plaintext.
+
+| Encryptions with one key | Approx. collision probability |
+|---|---|
+| 1 | 0 |
+| 2²⁰ (≈ 1 million) | 2⁻⁵⁷ |
+| 2³² (≈ 4.3 billion, NIST limit) | 2⁻³³ |
+
+**How the vault stays far below these limits:** since D3, every file gets a **fresh random 256-bit file key (DEK)**, and that key encrypts **exactly one** message. The key is never reused, so the number of encryptions per key is q = 1 and a nonce collision under the same key is impossible. The key-encryption keys used to wrap the DEK (D3) are also single-use: each one is derived from a fresh ephemeral ECDH exchange. If the module were ever changed to reuse a key, the limit to enforce would be 2³² encryptions per key, after which the key must be rotated.
+
+## 6. Current Implementation (final system)
+
+The single-key D2 module described above was replaced by the hybrid module in `vault/crypto_module.py` (see [`D3-Hybrid_Encryption.md`](D3-Hybrid_Encryption.md#update-for-the-final-system-container-v6)). The D2 feedback was addressed there:
+
+| D2 feedback | Where it is addressed |
+|---|---|
+| Documentation did not match the code | This document now refers to `vault/crypto_module.py`, `SecureEncryptionModule` and the current tests. |
+| Explicit container validation | `SecureEncryptionModule.parse_container()` validates every field (types, lengths, Base64, versions, algorithms, recipient entries) before any cryptographic operation. |
+| Broad exception handler | Replaced by specific exceptions in `vault/errors.py` (`ContainerFormatError`, `SignatureError`, `AccessDeniedError`, `IntegrityError`, `RecipientError`), raised `from None` so internal details are not exposed. |
+| Tests for modified AAD, nonces, ciphertext, malformed containers | `tests/test_signatures.py` and `tests/test_ecies_validation.py`. |
+| Nonce uniqueness and per-key limits | Section 5 above. |

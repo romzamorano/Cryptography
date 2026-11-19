@@ -1,3 +1,12 @@
+"""
+D3 - Hybrid encryption: required tests.
+
+1. File shared with 2 users        -> both can decrypt
+2. Unauthorized user               -> cannot decrypt
+3. Wrong private key               -> fails
+4. Tampered recipient list         -> decryption fails
+5. Removing a recipient entry      -> breaks access
+"""
 import unittest
 import json
 from cryptography.hazmat.primitives.asymmetric import ec
@@ -7,22 +16,22 @@ class TestHybridEncryption(unittest.TestCase):
 
     def setUp(self):
         self.module = SecureEncryptionModule()
-        self.plaintext = b"Informacion ultra secreta del proyecto."
+        self.plaintext = b"Top secret project information."
 
-        # 1. Generar identidades y pares de claves (Pública/Privada) para 3 usuarios
+        # 1. Generate identities and (public/private) key pairs for 3 users
         self.alice_priv = ec.generate_private_key(ec.SECP256R1())
         self.alice_pub = self.alice_priv.public_key()
 
         self.bob_priv = ec.generate_private_key(ec.SECP256R1())
         self.bob_pub = self.bob_priv.public_key()
 
-        self.eve_priv = ec.generate_private_key(ec.SECP256R1()) # Eve será nuestra atacante
+        self.eve_priv = ec.generate_private_key(ec.SECP256R1()) # Eve is the attacker
         self.eve_pub = self.eve_priv.public_key()
 
-        # D5: Alice (remitente) también tiene un par de llaves Ed25519 para firmar
+        # D5: Alice (sender) also has an Ed25519 key pair to sign
         self.alice_sign_priv, self.alice_sign_pub = SecureEncryptionModule.generate_signing_keypair()
 
-        # 2. Definir la lista de destinatarios autorizados (Alice y Bob)
+        # 2. Authorized recipient list (Alice and Bob)
         self.recipients = [
             {"id": "Alice", "public_key": self.alice_pub},
             {"id": "Bob", "public_key": self.bob_pub}
@@ -33,56 +42,56 @@ class TestHybridEncryption(unittest.TestCase):
                                         signer_private_key=self.alice_sign_priv)
 
     def test_1_shared_two_users_both_decrypt(self):
-        """Requisito: File shared with 2 users then both can decrypt."""
+        """Requirement: file shared with 2 users -> both can decrypt."""
         container = self._encrypt()
 
-        # Alice intenta descifrar
+        # Alice decrypts
         decrypted_alice = self.module.decrypt_file(container, self.alice_priv, "Alice", self.alice_sign_pub)
         self.assertEqual(self.plaintext, decrypted_alice)
 
-        # Bob intenta descifrar
+        # Bob decrypts
         decrypted_bob = self.module.decrypt_file(container, self.bob_priv, "Bob", self.alice_sign_pub)
         self.assertEqual(self.plaintext, decrypted_bob)
 
     def test_2_unauthorized_user_cannot_decrypt(self):
-        """Requisito: Unauthorized user cannot decrypt."""
+        """Requirement: unauthorized user cannot decrypt."""
         container = self._encrypt()
 
-        # Eve (no está en la lista) intenta descifrar buscando su ID
+        # Eve (not in the list) tries to decrypt with her own ID
         with self.assertRaises(ValueError):
             self.module.decrypt_file(container, self.eve_priv, "Eve", self.alice_sign_pub)
 
     def test_3_wrong_private_key_fails(self):
-        """Requisito: Wrong private key then fails."""
+        """Requirement: wrong private key -> fails."""
         container = self._encrypt()
 
-        # Eve intenta hacerse pasar por Bob usando el ID de "Bob", pero su propia clave privada
+        # Eve impersonates Bob: she uses the ID "Bob" but her own private key
         with self.assertRaises(ValueError):
             self.module.decrypt_file(container, self.eve_priv, "Bob", self.alice_sign_pub)
 
     def test_4_tampered_recipient_list_fails(self):
-        """Requisito: Tampered recipient list then decryption fails."""
+        """Requirement: tampered recipient list -> decryption fails."""
         container = json.loads(self._encrypt())
 
-        # El atacante altera directamente la lista de destinatarios (cambia "Bob" por "Eve")
+        # The attacker edits the recipient list directly ("Bob" -> "Eve")
         for r in container["recipients"]:
             if r["id"] == "Bob":
                 r["id"] = "Eve"
         tampered_container = json.dumps(container).encode("utf-8")
 
-        # Alice intenta abrirlo; la firma (y el AAD de AES-GCM) detectan la alteración
+        # Alice tries to open it: the signature (and the AES-GCM AAD) detect the change
         with self.assertRaises(ValueError):
             self.module.decrypt_file(tampered_container, self.alice_priv, "Alice", self.alice_sign_pub)
 
     def test_5_removing_recipient_breaks_access(self):
-        """Requisito: Removing a recipient entry then breaks access."""
+        """Requirement: removing a recipient entry -> breaks access."""
         container = json.loads(self._encrypt())
 
-        # El atacante elimina a "Bob" de la lista de destinatarios
+        # The attacker removes "Bob" from the recipient list
         container["recipients"] = [r for r in container["recipients"] if r["id"] != "Bob"]
         tampered_container = json.dumps(container).encode("utf-8")
 
-        # Aunque Alice sigue en la lista y su clave es correcta, el archivo es rechazado
+        # Even though Alice is still listed and her key is correct, the file is rejected
         with self.assertRaises(ValueError):
             self.module.decrypt_file(tampered_container, self.alice_priv, "Alice", self.alice_sign_pub)
 
