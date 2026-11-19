@@ -277,7 +277,8 @@ class TestKeyLifecycle(unittest.TestCase):
         self.assertIsNotNone(self.keystore.load_and_decrypt_key(path, self.password, allow_inactive=True))
 
         future = datetime.now(timezone.utc) + timedelta(days=365)
-        self.keystore.encrypt_and_save_key(self.key, self.password, "Alice", "P-256", path, expires_at=future)
+        self.keystore.encrypt_and_save_key(self.key, self.password, "Alice", "P-256", path, expires_at=future,
+                                           overwrite=True)
         self.assertIsNotNone(self.keystore.load_and_decrypt_key(path, self.password))
 
     def test_restore_verifies_backup(self):
