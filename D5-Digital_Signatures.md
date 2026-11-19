@@ -208,3 +208,55 @@ The D3 tests (`tests/test_crypto.py`) were updated to the signed container and s
 ```bash
 python -m unittest discover -s tests -v
 ```
+
+---
+
+## Trust Establishment, Revocation and Replay Protection (final system)
+
+These additions answer the D5 recommendations: document how signing keys become trusted, and address key revocation and replay protection. Implemented in `vault/trust_store.py` and `vault/replay_guard.py`.
+
+### 1. How a signing key becomes trusted
+
+A fingerprint identifies a key but does not prove who owns it. Trust is established once, out of band (like Signal safety numbers or SSH host keys):
+
+1. Alice exports her **public key bundle** (`SDDV-PUBLIC-KEYS`): her name, her P-256 encryption public key, her Ed25519 signing public key and both fingerprints.
+2. Bob imports the bundle. The application validates it (the fingerprints must match the keys, key types must be P-256 and Ed25519) and **shows both fingerprints**.
+3. Bob confirms the fingerprints with Alice through an independent channel (in person, by phone). Optionally he types them: if they do not match the keys, the import is refused.
+4. The keys are stored in Bob's **trust store** (`SDDV-TRUSTSTORE`, a local file with `0600` permissions) under the name "Alice".
+
+From then on, when Bob opens a file "from Alice", the application reads the `signer_id` declared in the package, looks it up **only among the keys trusted for Alice**, and verifies the signature with that key. A key that is not trusted for Alice is rejected, even if its signature is mathematically valid.
+
+| Situation | Behavior | Error |
+|---|---|---|
+| Package signed by a key not trusted for the expected sender | Rejected | `SignatureError` |
+| Bundle under a known name with **different** keys (possible key substitution) | Refused unless the user confirms the change | `KeyChangedError` |
+| Bundle whose keys do not match the fingerprints the user typed | Refused | `TrustStoreError` |
+
+### 2. Rotation and revocation of contact keys
+
+Each trusted key has a status:
+
+| Status | Meaning | Verify old files | Encrypt new files for it |
+|---|---|---|---|
+| `active` | Current key of the contact | ✅ | ✅ |
+| `retired` | Replaced by a rotation the user accepted | ✅ (files signed before the rotation) | ❌ |
+| `revoked` | Reported compromised | ❌ (old **and** new files) | ❌ |
+
+* **Rotation:** Alice rotates her keys (D6 `rotate_key`) and re-publishes her bundle. Bob imports it; the application warns that the key changed and, after Bob confirms the new fingerprint, the old key becomes `retired`.
+* **Revocation:** Alice reports that her laptop was stolen. Bob marks her key as `revoked`. Every package signed with that key is refused from then on (an attacker holding the stolen key could sign new packages with old timestamps), and a revoked key can never be trusted again, not even under another name.
+* On her own side, Alice marks her key as `compromised` in her keystore (D6), so the application refuses to use it.
+
+### 3. Replay protection
+
+A replayed package has a **valid signature**: the attacker re-delivers an old genuine package (for example, an outdated set of instructions) so it is treated as new. Two checks are applied **after** the signature is verified and **before** decrypting:
+
+1. **Freshness window:** the signed `timestamp` must be at most **30 days** old and at most **5 minutes** in the future. The timestamp is signed, so the attacker cannot refresh it.
+2. **Seen-package cache:** each user keeps a cache of the identifiers of the packages already accepted (`SHA-256` of the signed data). The same package is refused the second time.
+
+The identifier is only recorded **after a successful decryption**, so a tampered copy cannot block the genuine package. Entries older than the window are pruned, because such packages are rejected by the freshness check anyway. A corrupted cache raises an error instead of silently disabling the protection.
+
+| Test file | What it verifies |
+|---|---|
+| `tests/test_trust_store.py` | Bundles, expected fingerprints, key-change detection, rotation (retired keys), revocation |
+| `tests/test_replay_guard.py` | Freshness window, seen cache, persistence, pruning, corrupted cache |
+| `tests/integration/test_trust_and_replay_flow.py` | The full flow: trusted exchange, unknown sender, key substitution, revoked sender, rotation, replay, stale package |
