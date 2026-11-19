@@ -33,3 +33,36 @@ class IntegrityError(VaultError):
 
 class RecipientError(VaultError):
     """The recipient list given to encrypt_file is invalid (empty, duplicated, wrong key...)."""
+
+
+# --------------------------------------------------------------------------- keystore (D6)
+class KeystoreError(VaultError):
+    """Base class of keystore errors."""
+
+
+class KeystoreFormatError(KeystoreError):
+    """The keystore file is malformed, corrupted or uses unsupported parameters."""
+
+
+class KeystoreAuthError(KeystoreError):
+    """Wrong password or tampered keystore (AES-GCM authentication failed)."""
+
+
+class KeystoreNotFoundError(KeystoreError):
+    """The keystore file does not exist or cannot be read."""
+
+
+class KeystoreExistsError(KeystoreError):
+    """Refusing to overwrite an existing keystore file."""
+
+
+class WeakPasswordError(KeystoreError):
+    """The password does not meet the password policy."""
+
+
+class KeyRevokedError(KeystoreError):
+    """The key was marked as compromised and can never be used again."""
+
+
+class KeyInactiveError(KeystoreError):
+    """The key is retired (rotated) or expired."""

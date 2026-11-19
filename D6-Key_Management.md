@@ -58,11 +58,20 @@ with keystore.unlocked_key("keystore/Alice_p256.json") as alice_priv:   # asks f
 | Iterations | **600,000** (default **and minimum**) | OWASP Password Storage Cheat Sheet value for PBKDF2-HMAC-SHA256. Around 0.1–0.5 s per unlock: unnoticeable for a user, very expensive for an attacker testing millions of passwords. |
 | Salt | 16 random bytes per keystore (`os.urandom`) | Two users with the same password get different KEKs, and precomputed (rainbow) tables are useless. |
 | Output | 32 bytes | AES-256 key. |
-| Password policy | At least 12 characters when a keystore is created | Reduces the risk of trivial dictionary passwords. |
+| Password policy | At least 12 characters; not in a list of common passwords; not only digits; at least 5 different characters; no simple sequences (`abcd…`, `1234…`) | Applied when a keystore is created and when the password is changed. Reduces the risk of trivial dictionary passwords (see §11). |
+| Maximum iterations | 10,000,000 | A keystore asking for more is rejected **before** deriving, so an edited file cannot hang the application (denial of service). |
 
 **Downgrade protection:** a keystore that asks for fewer iterations than `min_iterations` is rejected *before* deriving anything, so an attacker cannot edit the file to make brute force cheaper.
 
-**Upgrade path:** PBKDF2 is CPU-hard but not memory-hard, so GPUs can attack it faster than Argon2id or scrypt. The `kdf_parameters.algorithm` field and the `version` field allow migrating to Argon2id later: the user opens the keystore with the old KDF and `change_password()` re-encrypts it.
+**Why PBKDF2 and not Argon2id or scrypt?**
+
+| KDF | Memory-hard | Status in this project |
+|---|---|---|
+| **PBKDF2-HMAC-SHA256** | No (CPU-hard only) | **Chosen.** Approved by NIST (SP 800-132) and specified in RFC 8018; it is the KDF covered in the course and the most widely audited and interoperable option. Its cost is controlled by one parameter (iterations), which keeps the format and the downgrade/DoS checks simple. |
+| scrypt | Yes | Also available in `cryptography`. Stronger against GPUs/ASICs, but it is not NIST-approved and needs three parameters (N, r, p) to validate. |
+| Argon2id | Yes | Winner of the Password Hashing Competition and the first choice of OWASP; only available in recent versions of `cryptography` (≥ 44), and our `requirements.txt` supports ≥ 42. |
+
+The trade-off is explicit: PBKDF2 is **not memory-hard**, so an attacker with GPUs can test passwords faster than against Argon2id or scrypt (see the offline guessing threat in §11). We compensate with the OWASP iteration count and the password policy, and the format is ready to migrate: `kdf_parameters.algorithm` and `version` identify the KDF, so a future version can accept Argon2id keystores and `change_password()` re-encrypts the key with the new KDF.
 
 ## 4. Key storage format
 
@@ -202,8 +211,34 @@ The protection is only as strong as the password. PBKDF2 makes every guess expen
 
 **What are the system limitations?**
 * It cannot protect against malware on the user's device or a user who reveals the password.
-* PBKDF2 is not memory-hard (Argon2id would resist GPU attacks better; the format allows migrating).
+* PBKDF2 is not memory-hard (Argon2id would resist GPU attacks better; the format allows migrating, see §3).
+* On Windows, `chmod 0600` only toggles the read-only flag; file access is controlled by the ACLs of the user profile, so the keystore folder must stay inside the user's home directory.
 * Python cannot guarantee that the key is wiped from memory.
 * Revocation and rotation are local and must be communicated out-of-band.
 * Metadata (key ID, public key, dates, status) is readable without the password; it is authenticated, not encrypted.
 * A forgotten password means the key and the files that depend on it are lost.
+
+## 11. Hardening after the D6 review
+
+| D6 feedback | Implementation | Tests (`tests/test_keystore_hardening.py`) |
+|---|---|---|
+| Complete key lifecycle | Rotation (`rotate_key`), revocation (`mark_compromised`), expiration (`expires_at`), password change, backup/restore. Revocation is also propagated to contacts through the trust store (see [`D5-Digital_Signatures.md`](D5-Digital_Signatures.md)). | `test_key_management.py` (`TestKeyLifecycle`) |
+| `open(filepath, 'w')`: no permissions, can overwrite | Atomic write (`mkstemp` + `fsync`), `0600` permissions, and **no overwrite by default**: `encrypt_and_save_key(..., overwrite=False)` refuses an existing file; the final step is a hard link, which fails atomically if the destination exists. Rotation never overwrites an existing keystore. | `TestNoAccidentalOverwrite` |
+| Metadata and KDF parameters not authenticated | The AAD is the whole header: format, version, **all metadata** and **all KDF parameters** (`_aad`). Any change makes unlocking fail. | `test_3_modified_keystore_failure` |
+| KDF choice | Justified in §3 (PBKDF2 vs scrypt vs Argon2id). Iterations bounded: minimum 600,000 (downgrade) and maximum 10,000,000 (DoS). | `TestKdfParameterBounds` |
+| Password policy | Length ≥ 12, common-password list, not only digits, ≥ 5 distinct characters, no simple sequences. | `TestPasswordPolicy` |
+| Backup and recovery | Backups are verified byte-by-byte after copying and never overwrite each other. `restore_keystore(..., expected_fingerprint=...)` checks the password, integrity **and the identity of the key** before copying; nothing is written if any check fails. | `TestBackupAndRecovery` |
+| Failure handling | Specific exceptions in `vault/errors.py`: `KeystoreFormatError` (malformed JSON, Base64, fields, KDF parameters, oversized files), `KeystoreAuthError` (wrong password / tampering), `KeystoreNotFoundError`, `KeystoreExistsError`, `WeakPasswordError`, `KeyRevokedError`, `KeyInactiveError`. All raised `from None`. | `TestMalformedKeystores` |
+
+### Offline password-guessing threat
+
+An attacker who copies a keystore file (stolen laptop, leaked backup) can try passwords **offline**, without any rate limit and without the application noticing. The cost per guess is 600,000 HMAC-SHA256 computations:
+
+| Password | Guesses needed (worst case) | Time with 10⁶ guesses/s (GPU rig, PBKDF2 at 600k) |
+|---|---|---|
+| 8 lowercase letters (26⁸ ≈ 2×10¹¹) | 2×10¹¹ | ≈ 2.4 days |
+| 12 lowercase letters (26¹² ≈ 9.5×10¹⁶) | 9.5×10¹⁶ | ≈ 3,000 years |
+| 4 random common words (7,776⁴ ≈ 3.7×10¹⁵) | 3.7×10¹⁵ | ≈ 117 years |
+| A password from a leaked-password list | ~10⁹ | ≈ 17 minutes |
+
+The table (rough, order-of-magnitude figures) shows why the policy focuses on **length** and on rejecting **common** passwords: no KDF can save a password that is on a dictionary list, while a long passphrase is out of reach even for PBKDF2. The salt makes each keystore a separate target (no precomputed tables), and the maximum-iterations bound guarantees the attacker cannot turn the KDF against the user (DoS).
