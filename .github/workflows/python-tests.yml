@@ -33,3 +33,7 @@ jobs:
       run: |
         python -m unittest discover -s tests -v
 
+    - name: Smoke test of the entry points
+      run: |
+        echo 0 | python vault_cli.py --home "$RUNNER_TEMP/vault_home"
+        python -c "import vault; from vault.app import VaultApp; print('vault package OK')"
