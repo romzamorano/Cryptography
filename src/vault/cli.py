@@ -22,7 +22,8 @@ from vault.attack_lab import LAB_PASSWORDS, AttackLab, Outcome
 from vault.errors import KeyChangedError, ReplayError, StaleContainerError, VaultError
 from vault.keystore import DEFAULT_ITERATIONS, MIN_ITERATIONS
 
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# src/vault/cli.py -> repository root (two levels above the package)
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 class BackToMenu(Exception):
