@@ -1,2 +1,6 @@
+# Runtime dependency
 cryptography>=42.0
-pytest>=8.0
+
+# Installs this project (the "vault" package in src/) in editable mode,
+# so "import vault" works from anywhere (tests, examples, menu).
+-e .
