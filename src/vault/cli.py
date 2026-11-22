@@ -476,7 +476,10 @@ class VaultCLI:
         self.info("Running: python -m unittest discover -s tests" + (" -v" if verbose else ""))
         self.info()
         cmd = [sys.executable, "-m", "unittest", "discover", "-s", "tests"] + (["-v"] if verbose else [])
-        result = subprocess.run(cmd, cwd=REPO_ROOT)
+        # src/ is added to PYTHONPATH so the tests also run if the project was not installed
+        env = dict(os.environ)
+        env["PYTHONPATH"] = os.pathsep.join(filter(None, [os.path.join(REPO_ROOT, "src"), env.get("PYTHONPATH")]))
+        result = subprocess.run(cmd, cwd=REPO_ROOT, env=env)
         (self.ok if result.returncode == 0 else self.fail)(
             "All tests passed." if result.returncode == 0 else "Some tests failed (see above).")
 
