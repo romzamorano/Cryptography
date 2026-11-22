@@ -16,5 +16,8 @@ authors = [
     { name = "Siliano Haller Rodrigo" },
 ]
 
+[project.scripts]
+secure-vault = "vault.cli:main"
+
 [tool.setuptools.packages.find]
 where = ["src"]
