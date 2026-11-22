@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "secure-document-vault"
+version = "1.0.0"
+description = "Secure File Exchange Platform: hybrid encryption (AES-256-GCM + ECIES P-256), Ed25519 signatures and password-protected key management"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["cryptography>=42.0"]
+authors = [
+    { name = "Carballo Ramírez Hanny" },
+    { name = "Monter González Luis Enrique" },
+    { name = "Romero Zamorano Rosa Jennifer" },
+    { name = "Siliano Haller Rodrigo" },
+]
+
+[project.scripts]
+secure-vault = "vault.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

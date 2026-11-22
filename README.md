@@ -24,7 +24,7 @@ The **Secure Digital Document Vault** is a command-line application to send file
 * **Recipient identity:** recipients are identified by the **SHA-256 fingerprint** of their public key, never by a self-declared name.
 * **Trust, revocation and replay:** each user keeps a **trust store** of contacts (public keys confirmed by fingerprint, key-change detection, rotation and revocation) and a **replay cache** (packages already received are refused; packages older than 30 days are refused).
 * **Key management (D6):** private keys are **never stored in plaintext**: they live in password-protected keystores (**PBKDF2-HMAC-SHA256**, 600,000 iterations + **AES-256-GCM**, whole header authenticated) with rotation, revocation, expiration and verified backup/restore.
-* **Robustness:** every untrusted input is validated before use and every failure raises a specific error (`vault/errors.py`); recovered files are written with sanitized names, only inside the user's inbox and never overwriting.
+* **Robustness:** every untrusted input is validated before use and every failure raises a specific error (`src/vault/errors.py`); recovered files are written with sanitized names, only inside the user's inbox and never overwriting.
 
 ## Architecture
 
@@ -53,7 +53,7 @@ The threat model, attack scenarios and traceability matrix are in [`D1_Architect
 | D1 — Architecture & Threat Model | [`D1_Architecture_Threat_Model.md`](D1_Architecture_Threat_Model.md) |
 | D2 — Secure Symmetric Encryption Module | [`D2 - Secure Symmetric Encryption Module.md`](D2%20-%20Secure%20Symmetric%20Encryption%20Module.md) |
 | D3 — Hybrid Encryption (multi-recipient) | [`D3-Hybrid_Encryption.md`](D3-Hybrid_Encryption.md) |
-| D4 — Midterm System Presentation & Security Review | [Slides (Genially)](https://view.genially.com/6ae7e53c6fd0bfcb5d875c20) · Demo: [`demo.py`](demo.py) |
+| D4 — Midterm System Presentation & Security Review | [Slides (Genially)](https://view.genially.com/6ae7e53c6fd0bfcb5d875c20) · Demo: [`examples/demo.py`](examples/demo.py) |
 | D5 — Digital Signatures (+ trust, revocation, replay) | [`D5-Digital_Signatures.md`](D5-Digital_Signatures.md) |
 | D6 — Secure Key Management | [`D6-Key_Management.md`](D6-Key_Management.md) |
 
@@ -63,8 +63,11 @@ The threat model, attack scenarios and traceability matrix are in [`D1_Architect
 Cryptography/
 ├── .github/workflows/python-tests.yml   # CI: runs all the tests on push / PR
 ├── vault_cli.py                         # MAIN PROGRAM: interactive menu
-├── demo.py                              # Quick scripted demonstration (D4)
-├── vault/
+├── pyproject.toml                       # Project configuration (src layout)
+├── requirements.txt                     # Dependencies + editable install of the project
+├── scripts/                             # setup.(sh|bat), run_tests.(sh|bat)
+├── examples/demo.py                     # Quick scripted demonstration (D4)
+├── src/vault/
 │   ├── cli.py                           # Menu: input/output only
 │   ├── app.py                           # Use cases: users, contacts, send, receive, key lifecycle
 │   ├── attack_lab.py                    # Attack scenarios shown step by step in the menu
@@ -92,7 +95,6 @@ Cryptography/
 │       └── test_cli_menu.py             # The menu driven with scripted keyboard input
 ├── architecture_d3.png
 ├── diagrama.png
-├── requirements.txt
 └── README.md
 ```
 
@@ -149,7 +151,7 @@ Data is stored in `vault_home/` (ignored by Git). Use `python vault_cli.py --hom
 ### 5. Quick scripted demo
 
 ```bash
-python demo.py
+python examples/demo.py
 ```
 
 A guided tour of the cryptography (encryption, sharing, tampering, signatures and key management) used in the D4 presentation. Press **Enter** to move between sections; it asks for a password for Alice, Bob and Eve (at least 12 characters). Each run starts from a clean `demo_files/` folder.

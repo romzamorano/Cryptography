@@ -1,0 +1,6 @@
+# Normalize line endings: scripts must keep the format of their platform
+*.py   text eol=lf
+*.sh   text eol=lf
+*.bat  text eol=crlf
+*.png  binary
+*.pdf  binary

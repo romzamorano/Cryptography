@@ -22,7 +22,8 @@ from vault.attack_lab import LAB_PASSWORDS, AttackLab, Outcome
 from vault.errors import KeyChangedError, ReplayError, StaleContainerError, VaultError
 from vault.keystore import DEFAULT_ITERATIONS, MIN_ITERATIONS
 
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# src/vault/cli.py -> repository root (two levels above the package)
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
 class BackToMenu(Exception):
@@ -475,7 +476,10 @@ class VaultCLI:
         self.info("Running: python -m unittest discover -s tests" + (" -v" if verbose else ""))
         self.info()
         cmd = [sys.executable, "-m", "unittest", "discover", "-s", "tests"] + (["-v"] if verbose else [])
-        result = subprocess.run(cmd, cwd=REPO_ROOT)
+        # src/ is added to PYTHONPATH so the tests also run if the project was not installed
+        env = dict(os.environ)
+        env["PYTHONPATH"] = os.pathsep.join(filter(None, [os.path.join(REPO_ROOT, "src"), env.get("PYTHONPATH")]))
+        result = subprocess.run(cmd, cwd=REPO_ROOT, env=env)
         (self.ok if result.returncode == 0 else self.fail)(
             "All tests passed." if result.returncode == 0 else "Some tests failed (see above).")
 
