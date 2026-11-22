@@ -5,3 +5,8 @@ keystore/
 backup_usb/
 *.keystore.json
 vault_home/
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
