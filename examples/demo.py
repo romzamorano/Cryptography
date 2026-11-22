@@ -2,7 +2,7 @@
 Demo - Secure Digital Document Vault (D3: Hybrid Encryption + D5: Digital Signatures + D6: Key Management)
 
 Usage (from the repository root):
-    python demo.py
+    python examples/demo.py
 
 Shows, in order:
   1. Encrypt a file             -> Valid encryption -> decryption works
@@ -22,7 +22,12 @@ import json
 import shutil
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives import serialization
-from vault.crypto_module import SecureEncryptionModule
+
+# Lets the demo run from a fresh clone even before "pip install -r requirements.txt"
+import sys
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
+
+from vault.crypto_module import SecureEncryptionModule  # noqa: E402
 from vault.keystore import SecureKeyStore, prompt_password
 
 DEMO_DIR = "demo_files"
