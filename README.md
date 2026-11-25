@@ -93,7 +93,24 @@ python vault_cli.py --home other_dir    # a separate set of users
 5. *Receive* the same package again → **rejected as a replay**. *Inspect* it to see what an attacker can see.
 6. *Attack lab → A*: runs every attack scenario in a separate sandbox: `17/17 attacks blocked`.
 
-To exchange files between two computers, each user creates **only their own user**, they exchange the `vault_home/public/<name>.pub.json` files and confirm fingerprints by another channel, import them with *Contacts → Import → other file...*, and send the `.vault` package by any channel (e-mail, drive, USB).
+### Exchanging files between two computers
+
+This is the real scenario the system is designed for: each person runs the program on **their own computer**, and files travel through any **untrusted** channel (e-mail, chat, cloud drive, USB stick). Example with Alice (computer A) and Bob (computer B), both with the repository installed:
+
+1. **Each person creates only their own user** (*Users and keys → Create a user*): Alice on computer A, Bob on computer B. Never create the other person's user: a private key must exist only on its owner's computer.
+2. **Exchange public keys.** Alice sends Bob her file `vault_home/public/Alice.pub.json`, and Bob sends Alice `vault_home/public/Bob.pub.json`, by any channel. These files only contain public keys. **Never send anything from `vault_home/users/`**: it holds the (encrypted) private keys, the contacts and the inbox.
+3. **Confirm the fingerprints through a different channel** (in person or by phone). Each one reads their signing fingerprint from *Users and keys → Show my keys and fingerprints* (`ed25519:...`). This step is what protects against somebody replacing the public-key file on the way.
+4. **Import the other person's keys** (*Contacts → Import a contact's public keys → other file...*), give the path of the received `.pub.json` (drag the file into the terminal) and paste the signing fingerprint the owner dictated. A fingerprint that does not match is rejected.
+5. **Alice sends the file** (*Send a file*: Alice → file → Bob). The package is created in `vault_home/shared/<file>.Alice.<date>.vault`. Alice sends **that `.vault` file** to Bob by any channel: whoever intercepts it can neither read it nor modify it without detection.
+6. **Bob opens it** (*Receive / open a file* → Bob → *other file...* → path of the downloaded `.vault` → expected sender: Alice → his password). After the six checks, the file is saved in `vault_home/users/Bob/inbox/`.
+
+Notes:
+
+* Contact names come from the bundle (`Alice.pub.json` → contact `Alice`): use different user names on each computer.
+* The clocks of both computers must be roughly correct: a package signed more than 5 minutes in the future or more than 30 days ago is rejected.
+* Each package is accepted once per recipient; opening it again is detected as a possible replay and requires explicit confirmation.
+* `vault_home/` is ignored by Git: do not use the repository to exchange keys or packages.
+* If a contact rotates or replaces a key, they send the new `.pub.json`; importing it shows a *key changed* warning that is accepted only after confirming the new fingerprint.
 
 ### Quick scripted demo
 
