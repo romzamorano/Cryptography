@@ -198,7 +198,7 @@ The fixed HKDF `info=b"ecies-key-wrap"` and the empty AES-GCM AAD of D3 were rep
 | Key wrap / file | AES-GCM tag | `IntegrityError` |
 | My key not listed | Fingerprint lookup | `AccessDeniedError` |
 
-All errors inherit from `VaultError` (a `ValueError`) and are raised `from None`, so no internal exception details are exposed. Tests: [`tests/test_ecies_validation.py`](tests/test_ecies_validation.py).
+All errors inherit from `VaultError` (a `ValueError`) and are raised `from None`, so no internal exception details are exposed. Tests: [`tests/test_ecies_validation.py`](../tests/test_ecies_validation.py).
 
 ### Container v6 layout
 

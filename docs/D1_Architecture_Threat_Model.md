@@ -20,7 +20,7 @@ To focus strictly on applied cryptography, the following elements are out of sco
 
 ## 2. Architecture Diagram
 
-![Architecture Diagram](diagrama.png)
+![Architecture Diagram](images/diagrama.png)
 
 **Architectural Details:**
 * **Where encryption happens:** Symmetrically within Alice's Secure File Exchange Engine (Trusted Sender boundary) before the file is exposed to the network.
