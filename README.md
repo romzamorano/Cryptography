@@ -28,7 +28,7 @@ The **Secure Digital Document Vault** is a command-line application to send file
 
 ## Architecture
 
-![Hybrid Encryption Architecture](architecture_d3.png)
+![Hybrid Encryption Architecture](docs/images/architecture_d3.png)
 
 1. Alice encrypts the file with a fresh **file key** (AES-256-GCM) → ciphertext + authentication tag.
 2. The file key is wrapped with ECIES for each recipient's **trusted** public key (identified by its fingerprint).
@@ -44,18 +44,18 @@ vault_cli.py  ->  vault/cli.py (menu)  ->  vault/app.py (use cases)  ->  crypto_
                                                                          errors.py          (specific exceptions)
 ```
 
-The threat model, attack scenarios and traceability matrix are in [`D1_Architecture_Threat_Model.md`](D1_Architecture_Threat_Model.md).
+The threat model, attack scenarios and traceability matrix are in [`D1_Architecture_Threat_Model.md`](docs/D1_Architecture_Threat_Model.md).
 
 ## Documentation by deliverable
 
 | Deliverable | Document |
 |---|---|
-| D1 — Architecture & Threat Model | [`D1_Architecture_Threat_Model.md`](D1_Architecture_Threat_Model.md) |
-| D2 — Secure Symmetric Encryption Module | [`D2 - Secure Symmetric Encryption Module.md`](D2%20-%20Secure%20Symmetric%20Encryption%20Module.md) |
-| D3 — Hybrid Encryption (multi-recipient) | [`D3-Hybrid_Encryption.md`](D3-Hybrid_Encryption.md) |
+| D1 — Architecture & Threat Model | [`D1_Architecture_Threat_Model.md`](docs/D1_Architecture_Threat_Model.md) |
+| D2 — Secure Symmetric Encryption Module | [`D2 - Secure Symmetric Encryption Module.md`](docs/D2%20-%20Secure%20Symmetric%20Encryption%20Module.md) |
+| D3 — Hybrid Encryption (multi-recipient) | [`D3-Hybrid_Encryption.md`](docs/D3-Hybrid_Encryption.md) |
 | D4 — Midterm System Presentation & Security Review | [Slides (Genially)](https://view.genially.com/6ae7e53c6fd0bfcb5d875c20) · Demo: [`examples/demo.py`](examples/demo.py) |
-| D5 — Digital Signatures (+ trust, revocation, replay) | [`D5-Digital_Signatures.md`](D5-Digital_Signatures.md) |
-| D6 — Secure Key Management | [`D6-Key_Management.md`](D6-Key_Management.md) |
+| D5 — Digital Signatures (+ trust, revocation, replay) | [`D5-Digital_Signatures.md`](docs/D5-Digital_Signatures.md) |
+| D6 — Secure Key Management | [`D6-Key_Management.md`](docs/D6-Key_Management.md) |
 
 ## Repository structure
 
